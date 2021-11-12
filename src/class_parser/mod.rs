@@ -5,19 +5,7 @@ use std::str::Utf8Error;
 
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::{
-    class_parser::iterator::ClassFileIterator,
-    model::{
-        class::{Class, ClassIndex, LoadedClasses},
-        class_file::ClassFile,
-        constant_pool::{ConstantPool, ConstantPoolEntry, ConstantPoolError, ConstantPoolIndex},
-        field::FieldDescriptor,
-        method::Method,
-        types::JvmType,
-        value::JvmValue,
-        visibility::Visibility,
-    },
-};
+use crate::{class_parser::iterator::ClassFileIterator, model::{class::{ClassIndex, LoadedClasses}, class_file::ClassFile, constant_pool::{ConstantPool, ConstantPoolEntry, ConstantPoolError, ConstantPoolIndex}, field::FieldDescriptor, method::{Method, MethodCode}, types::JvmType, value::JvmValue, visibility::Visibility}};
 
 pub fn parse(
     bytes: &[u8],
@@ -261,6 +249,7 @@ fn parse_methods(
 
         let name_index = iter.u16()?;
         let name = constant_pool.get_utf8(name_index.into())?.to_string();
+        dbg!(&name);
 
         let descriptor_index = iter.u16()?;
         let descriptor = constant_pool.get_utf8(descriptor_index.into())?.to_string();
@@ -290,9 +279,13 @@ fn parse_methods(
             }
         })?;
 
-        if code.is_none() {
+        let code = if let Some(bytecode) = code {
+            MethodCode::Bytecode(bytecode)
+        } else if is_native(access_flags) {
+            MethodCode::Native(None)
+        } else {
             return Err(ParsingError::MissingCode(name));
-        }
+        };
 
         let method = Method {
             name,
@@ -300,7 +293,7 @@ fn parse_methods(
             visibility,
             max_locals,
             max_stack,
-            code: code.unwrap(),
+            code,
         };
         dbg!(&method);
 
@@ -334,6 +327,10 @@ where
         }
     }
     Ok(())
+}
+
+fn is_native(access_flags: u16) -> bool {
+    access_flags & 0x0100 != 0
 }
 
 #[derive(thiserror::Error, Debug)]

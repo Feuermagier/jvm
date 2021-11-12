@@ -1,16 +1,6 @@
 pub mod locals;
 pub mod stack;
-use crate::{
-    bytecode,
-    model::{
-        class::{Class, FieldError, LoadedClasses, MethodError},
-        constant_pool::{ConstantPoolError, ConstantPoolIndex},
-        heap::{Heap, HeapIndex},
-        method::{Method, Parameters},
-        types::TypeError,
-        value::JvmValue,
-    },
-};
+use crate::{bytecode, model::{class::{Class, FieldError, LoadedClasses, MethodError}, constant_pool::{ConstantPoolError, ConstantPoolIndex}, heap::{Heap, HeapIndex}, method::{Method, MethodCode, Parameters}, types::TypeError, value::JvmValue}};
 
 use self::{locals::InterpreterLocals, stack::InterpreterStack};
 
@@ -22,6 +12,12 @@ pub fn execute_method(
     classes: &LoadedClasses,
     heap: &mut Heap,
 ) -> Result<JvmValue, ExecutionError> {
+    let code = &method.code;
+    let code = match code {
+        MethodCode::Bytecode(code) => code,
+        MethodCode::Native(_) => todo!(),
+    };
+
     let mut locals = InterpreterLocals::new(
         method.max_locals,
         parameters,
@@ -31,7 +27,6 @@ pub fn execute_method(
 
     let mut pc = 0;
 
-    let code = &method.code;
     loop {
         if pc >= code.len() {
             break Err(ExecutionError::MissingReturn);

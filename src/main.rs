@@ -23,10 +23,20 @@ fn main() {
     let mut classes = LoadedClasses::new();
     let mut heap = Heap::new();
 
+    let mut object_file = File::open("Object.class").unwrap();
+    let mut bytes = Vec::new();
+    object_file.read_to_end(&mut bytes).unwrap();
+    let (_, object) = class_parser::parse(&bytes, &mut classes).unwrap();
+
     let mut file = File::open("Test.class").unwrap();
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes).unwrap();
-    let (class_file, class) = class_parser::parse(&bytes, &mut classes).unwrap();
+    let (_, class) = class_parser::parse(&bytes, &mut classes).unwrap();
+
+    classes
+        .resolve(class)
+        .bootstrap(&classes, &mut heap)
+        .unwrap();
 
     classes
         .resolve(class)
