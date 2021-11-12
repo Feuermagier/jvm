@@ -1,25 +1,32 @@
 pub mod locals;
 pub mod stack;
-
-use std::ops::Rem;
-
-use crate::{bytecode::{self, LCMP}, model::{class::{Class, ConstantPoolEntry, ConstantPoolError, ConstantPoolIndex, FieldError, MethodError}, method::{Method, Parameters}, types::TypeError, value::JvmValue}};
+use crate::{
+    bytecode,
+    model::{
+        class::{Class, FieldError, LoadedClasses, MethodError},
+        constant_pool::{ConstantPoolError, ConstantPoolIndex},
+        heap::{Heap, HeapIndex},
+        method::{Method, Parameters},
+        types::TypeError,
+        value::JvmValue,
+    },
+};
 
 use self::{locals::InterpreterLocals, stack::InterpreterStack};
 
 pub fn execute_method(
-    name: &str,
+    method: &Method,
     parameters: Parameters,
-    callee_class: &mut Class,
-    this: Option<JvmValue>,
+    callee_class: &Class,
+    this: Option<HeapIndex>,
+    classes: &LoadedClasses,
+    heap: &mut Heap,
 ) -> Result<JvmValue, ExecutionError> {
-    let method = if this.is_some() {
-        callee_class.get_method(name)?
-    } else {
-        callee_class.get_static_method(name)?
-    };
-
-    let mut locals = InterpreterLocals::new(method.max_locals, parameters, this);
+    let mut locals = InterpreterLocals::new(
+        method.max_locals,
+        parameters,
+        this.map(|this| JvmValue::Reference(this)),
+    );
     let mut stack = InterpreterStack::new(method.max_stack);
 
     let mut pc = 0;
@@ -30,7 +37,7 @@ pub fn execute_method(
             break Err(ExecutionError::MissingReturn);
         }
         let opcode = code[pc];
-
+        println!("{:#04x}", opcode);
         match opcode {
             bytecode::ICONST_M1 => {
                 stack.push(JvmValue::Int(-1));
@@ -76,6 +83,10 @@ pub fn execute_method(
                 stack.push(JvmValue::Float(1.0));
                 pc += 1;
             }
+            bytecode::FCONST_2 => {
+                stack.push(JvmValue::Float(2.0));
+                pc += 1;
+            }
             bytecode::DCONST_0 => {
                 stack.push(JvmValue::Double(0.0));
                 pc += 1;
@@ -107,7 +118,7 @@ pub fn execute_method(
                     ConstantPoolIndex::from(u16::from_be_bytes([code[pc + 1], code[pc + 2]]));
                 let value = callee_class.get_loadable(index)?;
                 stack.push(value);
-                pc += 2;
+                pc += 3;
             }
 
             bytecode::ILOAD
@@ -201,6 +212,7 @@ pub fn execute_method(
             // + array stores
             bytecode::POP => {
                 stack.pop();
+                pc += 1;
             }
             bytecode::POP2 => {
                 let tos = stack.pop();
@@ -210,44 +222,49 @@ pub fn execute_method(
                         stack.pop();
                     }
                 }
+                pc += 1;
             }
 
             bytecode::DUP => {
                 let tos = stack.pop();
+                stack.push(tos.clone());
                 stack.push(tos);
-                stack.push(tos);
+                pc += 1;
             }
             bytecode::DUP_X1 => {
                 let top = stack.pop();
                 let second = stack.pop();
-                stack.push(top);
+                stack.push(top.clone());
                 stack.push(second);
                 stack.push(top);
+                pc += 1;
             }
             bytecode::DUP_X2 => {
                 let top = stack.pop();
                 let second = stack.pop();
                 let third = stack.pop();
-                stack.push(top);
+                stack.push(top.clone());
                 stack.push(third);
                 stack.push(second);
                 stack.push(top);
+                pc += 1;
             }
             bytecode::DUP2 => {
                 let top = stack.pop();
                 match top {
                     JvmValue::Double(_) | JvmValue::Long(_) => {
-                        stack.push(top);
+                        stack.push(top.clone());
                         stack.push(top);
                     }
                     _ => {
                         let second = stack.pop();
-                        stack.push(second);
-                        stack.push(top);
+                        stack.push(second.clone());
+                        stack.push(top.clone());
                         stack.push(second);
                         stack.push(top);
                     }
                 }
+                pc += 1;
             }
 
             bytecode::SWAP => {
@@ -255,6 +272,7 @@ pub fn execute_method(
                 let second = stack.pop();
                 stack.push(top);
                 stack.push(second);
+                pc += 1;
             }
 
             bytecode::IADD => {
@@ -696,6 +714,41 @@ pub fn execute_method(
                 callee_class.set_static_field(field_name, stack.pop())?;
                 pc += 3;
             }
+            bytecode::GETFIELD => {
+                let field_name = callee_class.resolve_field(index(code[pc + 1], code[pc + 2]))?;
+                let field = heap
+                    .resolve(this.expect("Getting an instance field but this is not bound"))
+                    .get_field(field_name, classes)?;
+                stack.push(field);
+                pc += 3;
+            }
+            bytecode::PUTFIELD => {
+                let field_name = callee_class.resolve_field(index(code[pc + 1], code[pc + 2]))?;
+                heap.resolve(this.expect("Getting an instance field but this is not bound"))
+                    .set_field(field_name, classes, stack.pop())?;
+                pc += 3;
+            }
+
+            bytecode::INVOKESPECIAL => {
+                let method_index = index(code[pc + 1], code[pc + 2]);
+                let (class, name, ty) = callee_class.resolve_method(method_index)?;
+                let class = classes.resolve_by_name(class);
+                class.call_method(
+                    name,
+                    Parameters::empty(),
+                    stack.pop().as_reference()?,
+                    classes,
+                    heap,
+                )?;
+                pc += 3;
+            }
+            // + invokestatic, invokevirtual, invokeinterface, invokedynamic
+            bytecode::NEW => {
+                let class_name = callee_class.resolve_type(index(code[pc + 1], code[pc + 2]))?;
+                let instance = heap.instantiate(classes.resolve_by_name(class_name));
+                stack.push(JvmValue::Reference(instance));
+                pc += 3;
+            }
 
             _ => todo!("Unimplemented opcode {:#04x}", opcode),
         }
@@ -737,5 +790,5 @@ pub enum ExecutionError {
     FieldError {
         #[from]
         value: FieldError,
-    }
+    },
 }

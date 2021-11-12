@@ -1,14 +1,15 @@
-use std::{fmt::Display, ops::Shl};
+use std::fmt::Display;
 
-use super::types::{JvmType, TypeError};
+use super::{heap::HeapIndex, types::{JvmType, TypeError}};
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub enum JvmValue {
     Void,
     Int(i32),
     Long(i64),
     Float(f32),
     Double(f64),
+    Reference(HeapIndex)
 }
 
 impl JvmValue {
@@ -19,6 +20,7 @@ impl JvmValue {
             JvmValue::Long(_) => JvmType::Long,
             JvmValue::Float(_) => JvmType::Float,
             JvmValue::Double(_) => JvmType::Double,
+            JvmValue::Reference(_) => JvmType::Reference,
         }
     }
 
@@ -56,6 +58,13 @@ impl JvmValue {
         match self {
             JvmValue::Double(value) => Ok(value),
             _ => Err(TypeError::WrongType(JvmType::Double, self.get_type()))
+        }
+    }
+
+    pub fn as_reference(self) -> Result<HeapIndex, TypeError> {
+        match self {
+            JvmValue::Reference(reference) => Ok(reference),
+            _ => Err(TypeError::WrongType(JvmType::Reference, self.get_type()))
         }
     }
 }

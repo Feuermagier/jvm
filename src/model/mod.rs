@@ -5,3 +5,5 @@ pub mod class_file;
 pub mod visibility;
 pub mod value;
 pub mod types;
+pub mod heap;
+pub mod constant_pool;

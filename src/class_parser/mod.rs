@@ -8,8 +8,9 @@ use unicode_segmentation::UnicodeSegmentation;
 use crate::{
     class_parser::iterator::ClassFileIterator,
     model::{
-        class::{Class, ConstantPool, ConstantPoolEntry, ConstantPoolError, ConstantPoolIndex},
+        class::{Class, ClassIndex, LoadedClasses},
         class_file::ClassFile,
+        constant_pool::{ConstantPool, ConstantPoolEntry, ConstantPoolError, ConstantPoolIndex},
         field::FieldDescriptor,
         method::Method,
         types::JvmType,
@@ -18,7 +19,10 @@ use crate::{
     },
 };
 
-pub fn parse(bytes: &[u8]) -> Result<(ClassFile, Class), ParsingError> {
+pub fn parse(
+    bytes: &[u8],
+    classes: &mut LoadedClasses,
+) -> Result<(ClassFile, ClassIndex), ParsingError> {
     let mut iter = ClassFileIterator::new(bytes);
 
     // Magic number
@@ -63,7 +67,7 @@ pub fn parse(bytes: &[u8]) -> Result<(ClassFile, Class), ParsingError> {
     let class_file = ClassFile::new(minor_version, major_version);
 
     // Create the actual class
-    let class = Class::new(
+    let class = classes.load(
         constant_pool,
         visibility,
         this_class,
@@ -73,7 +77,7 @@ pub fn parse(bytes: &[u8]) -> Result<(ClassFile, Class), ParsingError> {
         fields,
         static_methods,
         methods,
-    );
+    )?;
 
     Ok((class_file, class))
 }
@@ -82,8 +86,10 @@ fn parse_constants(iter: &mut ClassFileIterator) -> Result<ConstantPool, Parsing
     let count = iter.u16()? - 1; // For some obscure reason the number in the class file is the size of the constant pool plus one
     let mut constants = Vec::with_capacity(count as usize);
 
-    for i in 0..count {
+    let mut i = 0; // We can't use for because some entries requires us to skip the next entry
+    while i < count {
         let tag = iter.byte()?;
+        dbg!(tag);
         match tag {
             // CONSTANT_Utf8
             1 => {
@@ -100,10 +106,18 @@ fn parse_constants(iter: &mut ClassFileIterator) -> Result<ConstantPool, Parsing
             4 => constants.push(ConstantPoolEntry::Float(iter.f32()?)),
 
             // CONSTANT_Long
-            5 => constants.push(ConstantPoolEntry::Long(iter.i64()?)),
+            5 => {
+                constants.push(ConstantPoolEntry::Long(iter.i64()?));
+                constants.push(ConstantPoolEntry::Empty);
+                i += 1; // Longs and doubles take up two slots
+            }
 
             // CONSTANT_Double
-            6 => constants.push(ConstantPoolEntry::Double(iter.f64()?)),
+            6 => {
+                constants.push(ConstantPoolEntry::Double(iter.f64()?));
+                constants.push(ConstantPoolEntry::Empty);
+                i += 1; // Longs and doubles take up two slots
+            }
 
             // CONSTANT_Class
             7 => constants.push(ConstantPoolEntry::Class {
@@ -136,6 +150,7 @@ fn parse_constants(iter: &mut ClassFileIterator) -> Result<ConstantPool, Parsing
 
             _ => return Err(ParsingError::UnknownConstantTag(tag)),
         }
+        i += 1;
     }
 
     Ok(ConstantPool::new(constants))
@@ -225,8 +240,9 @@ fn parse_field_type(string: &str) -> Result<JvmType, ParsingError> {
         "S" => Ok(JvmType::Long),
         "Z" => Ok(JvmType::Long),
         "L" => {
-            let class = iter.take_while(|c| *c != ";").collect();
-            Ok(JvmType::Reference(class))
+            let class = iter.take_while(|c| *c != ";").collect::<String>();
+            //Ok(JvmType::Reference(class))
+            Ok(JvmType::Reference)
         }
         _ => Err(ParsingError::InvalidFieldType(string.to_string())),
     }

@@ -24,19 +24,19 @@ impl InterpreterLocals {
     }
 
     pub fn get(&self, index: usize) -> JvmValue {
-        if let Some(this) = self.this {
+        if let Some(this) = &self.this {
             if index == 0 {
-                this
+                this.clone()
             } else {
-                self.locals[index - 1]
+                self.locals[index - 1].clone()
             }
         } else {
-            self.locals[index]
+            self.locals[index].clone()
         }
     }
 
     pub fn iget(&self, index: usize) -> i32 {
-        let value = self.locals[index];
+        let value = self.locals[index].clone();
         match value {
             JvmValue::Int(value) => value,
             _ => panic!(

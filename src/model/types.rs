@@ -9,7 +9,7 @@ pub enum JvmType {
     Long,
     Float,
     Double,
-    Reference(String),
+    Reference,
     Short,
     Boolean,
     // + arrays

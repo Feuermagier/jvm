@@ -1,6 +1,6 @@
 use crate::model::value::JvmValue;
 
-use super::{class::ConstantPoolIndex, types::JvmType, visibility::Visibility};
+use super::{types::JvmType, visibility::Visibility};
 
 pub struct FieldDescriptor {
     pub name: String,

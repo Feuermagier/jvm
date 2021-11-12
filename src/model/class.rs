@@ -1,18 +1,84 @@
-use std::{cell::RefCell, collections::HashMap, fmt::Display};
+use std::{cell::RefCell, collections::HashMap};
 
 use crate::{
     interpreter::{self, ExecutionError},
-    model::value::JvmValue,
+    model::{
+        constant_pool::{ConstantPoolEntry, ConstantPoolError},
+        value::JvmValue,
+    },
 };
 
 use super::{
+    constant_pool::{ConstantPool, ConstantPoolIndex},
     field::FieldDescriptor,
+    heap::{Heap, HeapIndex},
     method::{Method, Parameters},
     types::JvmType,
     visibility::Visibility,
 };
 
+pub struct LoadedClasses {
+    classes: Vec<Class>,
+    name_mappings: HashMap<String, usize>,
+}
+
+impl LoadedClasses {
+    pub fn new() -> Self {
+        Self {
+            classes: Vec::new(),
+            name_mappings: HashMap::new(),
+        }
+    }
+
+    pub fn resolve_by_name(&self, name: &str) -> &Class {
+        dbg!(&self.name_mappings);
+        dbg!(name);
+        &self.classes[*self.name_mappings.get(name).unwrap()]
+    }
+
+    pub fn resolve(&self, index: ClassIndex) -> &Class {
+        &self.classes[index.0]
+    }
+
+    pub fn load(
+        &mut self,
+        constant_pool: ConstantPool,
+        visibility: Visibility,
+        this_class: ConstantPoolIndex,
+        super_class: ConstantPoolIndex,
+        interfaces: Vec<ConstantPoolIndex>,
+        static_field_descriptors: Vec<FieldDescriptor>,
+        field_descriptors: Vec<FieldDescriptor>,
+        mut static_methods: Vec<Method>,
+        mut methods: Vec<Method>,
+    ) -> Result<ClassIndex, ConstantPoolError> {
+        let index = self.classes.len();
+
+        let class = Class::new(
+            ClassIndex(index),
+            constant_pool,
+            visibility,
+            this_class,
+            super_class,
+            interfaces,
+            static_field_descriptors,
+            field_descriptors,
+            static_methods,
+            methods,
+        );
+        self.name_mappings.insert(class.name()?.to_string(), index);
+        self.classes.push(class);
+        Ok(ClassIndex(index))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(transparent)]
+pub struct ClassIndex(usize);
+
 pub struct Class {
+    index: ClassIndex,
+
     constant_pool: ConstantPool,
     visibility: Visibility,
     this_class: ConstantPoolIndex,
@@ -21,7 +87,7 @@ pub struct Class {
 
     static_field_descriptors: Vec<FieldDescriptor>,
     static_field_index_map: HashMap<String, usize>,
-    static_fields: Vec<JvmValue>,
+    static_fields: RefCell<Vec<JvmValue>>,
 
     field_descriptors: Vec<FieldDescriptor>,
     field_index_map: HashMap<String, usize>,
@@ -31,7 +97,8 @@ pub struct Class {
 }
 
 impl Class {
-    pub fn new(
+    fn new(
+        index: ClassIndex,
         constant_pool: ConstantPool,
         visibility: Visibility,
         this_class: ConstantPoolIndex,
@@ -48,8 +115,8 @@ impl Class {
         for desc in &static_field_descriptors {
             let index = static_fields.len();
             static_field_index_map.insert(desc.name.clone(), index);
-            if let Some(value) = desc.constant_value {
-                static_fields.push(value);
+            if let Some(value) = &desc.constant_value {
+                static_fields.push(value.clone());
             } else {
                 static_fields.push(JvmValue::Void);
             }
@@ -71,6 +138,7 @@ impl Class {
             .collect();
 
         Self {
+            index,
             constant_pool,
             visibility,
             this_class,
@@ -78,7 +146,7 @@ impl Class {
             interfaces,
             static_field_descriptors,
             static_field_index_map,
-            static_fields,
+            static_fields: RefCell::new(static_fields),
             field_descriptors,
             field_index_map,
             static_methods,
@@ -86,8 +154,13 @@ impl Class {
         }
     }
 
-    pub fn bootstrap(&mut self) -> Result<(), ExecutionError> {
-        let return_value = self.call_static_method("<clinit>", Parameters::empty())?;
+    pub fn bootstrap(
+        &self,
+        classes: &LoadedClasses,
+        heap: &mut Heap,
+    ) -> Result<(), ExecutionError> {
+        let return_value =
+            self.call_static_method("<clinit>", Parameters::empty(), classes, heap)?;
         return_value.assert_type(JvmType::Void)?;
         Ok(())
     }
@@ -95,53 +168,110 @@ impl Class {
     pub fn resolve_field(&self, index: ConstantPoolIndex) -> Result<&'_ str, ConstantPoolError> {
         match self.constant_pool.get(index)? {
             //TODO use the class
-            ConstantPoolEntry::FieldReference {name_and_type, .. } =>  {
+            ConstantPoolEntry::FieldReference { name_and_type, .. } => {
                 match self.constant_pool.get(*name_and_type)? {
                     ConstantPoolEntry::NameAndType { name, .. } => {
                         self.constant_pool.get_utf8(*name)
-                    },
-                    _ => Err(ConstantPoolError::FieldNotResolvable(index))
+                    }
+                    _ => Err(ConstantPoolError::FieldNotResolvable(index)),
                 }
+            }
+            _ => Err(ConstantPoolError::FieldNotResolvable(index)),
+        }
+    }
+
+    pub fn resolve_type(&self, index: ConstantPoolIndex) -> Result<&str, ConstantPoolError> {
+        match self.constant_pool.get(index)? {
+            ConstantPoolEntry::Class { name } => self.constant_pool.get_utf8(*name),
+            _ => Err(ConstantPoolError::TypeNotResolvable(index)),
+        }
+    }
+
+    pub fn resolve_method(
+        &self,
+        index: ConstantPoolIndex,
+    ) -> Result<(&str, &str, &str), ConstantPoolError> {
+        match self.constant_pool.get(index)? {
+            ConstantPoolEntry::MethodReference {
+                class,
+                name_and_type,
+            } => match self.constant_pool.get(*name_and_type)? {
+                ConstantPoolEntry::NameAndType { name, ty } => Ok((
+                    self.resolve_type(*class)?,
+                    self.constant_pool.get_utf8(*name)?,
+                    self.constant_pool.get_utf8(*ty)?,
+                )),
+                _ => Err(ConstantPoolError::MethodNotResolvable(index)),
             },
-            _ => Err(ConstantPoolError::FieldNotResolvable(index))
+            _ => Err(ConstantPoolError::MethodNotResolvable(index)),
         }
     }
 
     pub fn get_static_field(&self, name: &str) -> Result<JvmValue, FieldError> {
         if let Some(local_index) = self.static_field_index_map.get(name) {
-            Ok(self.static_fields[*local_index])
+            Ok(self.static_fields.borrow()[*local_index].clone())
         } else {
             Err(FieldError::UnknownStaticField(name.to_string()))
         }
     }
 
-    pub fn set_static_field(&mut self, name: &str, value: JvmValue) -> Result<(), FieldError> {
+    pub fn set_static_field(&self, name: &str, value: JvmValue) -> Result<(), FieldError> {
         if let Some(local_index) = self.static_field_index_map.get(name) {
-            self.static_fields[*local_index] = value;
+            self.static_fields.borrow_mut()[*local_index] = value;
             Ok(())
         } else {
             Err(FieldError::UnknownStaticField(name.to_string()))
         }
     }
 
-    pub fn get_static_method(&self, name: &str) -> Result<&'_ Method, MethodError> {
+    fn get_static_method(&self, name: &str) -> Result<&'_ Method, MethodError> {
+        dbg!(&self.static_methods);
         self.static_methods
             .get(name)
             .ok_or_else(|| MethodError::UnknownStaticMethod(name.to_string()))
     }
 
-    pub fn get_method(&self, name: &str) -> Result<&'_ Method, MethodError> {
+    fn get_method(&self, name: &str) -> Result<&'_ Method, MethodError> {
         self.methods
             .get(name)
             .ok_or_else(|| MethodError::UnknownVirtualMethod(name.to_string()))
     }
 
     pub fn call_static_method(
-        &mut self,
+        &self,
         name: &str,
         parameters: Parameters,
+        classes: &LoadedClasses,
+        heap: &mut Heap,
     ) -> Result<JvmValue, ExecutionError> {
-        interpreter::execute_method(name, parameters, self, None)
+        // Resolve the method in super classes
+        interpreter::execute_method(
+            self.get_static_method(name)?,
+            parameters,
+            self,
+            None,
+            classes,
+            heap,
+        )
+    }
+
+    pub fn call_method(
+        &self,
+        name: &str,
+        parameters: Parameters,
+        this: HeapIndex,
+        classes: &LoadedClasses,
+        heap: &mut Heap,
+    ) -> Result<JvmValue, ExecutionError> {
+        // Resolve the method in super classes
+        interpreter::execute_method(
+            self.get_method(name)?,
+            parameters,
+            self,
+            Some(this),
+            classes,
+            heap,
+        )
     }
 
     pub fn get_loadable(&self, index: ConstantPoolIndex) -> Result<JvmValue, ConstantPoolError> {
@@ -157,101 +287,16 @@ impl Class {
             _ => Err(ConstantPoolError::NotLoadable(index)),
         }
     }
-}
 
-#[derive(Debug)]
-pub struct ConstantPool {
-    entries: Vec<ConstantPoolEntry>,
-}
-
-impl ConstantPool {
-    pub fn new(entries: Vec<ConstantPoolEntry>) -> Self {
-        Self { entries }
-    }
-
-    pub fn get(
-        &self,
-        index: ConstantPoolIndex,
-    ) -> Result<&'_ ConstantPoolEntry, ConstantPoolError> {
-        self.entries
-            .get((index.0 - 1) as usize)
-            .ok_or(ConstantPoolError::MissingEntry(index))
-    }
-
-    pub fn get_utf8(&self, index: ConstantPoolIndex) -> Result<&'_ str, ConstantPoolError> {
-        let value = self.get(index)?;
-        match value {
-            ConstantPoolEntry::Utf8(string) => Ok(string),
-            _ => Err(ConstantPoolError::NotAnUtf8String(index, value.clone())),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[repr(transparent)]
-pub struct ConstantPoolIndex(u16);
-
-impl From<u16> for ConstantPoolIndex {
-    fn from(index: u16) -> Self {
-        Self(index)
-    }
-}
-
-impl Display for ConstantPoolIndex {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum ConstantPoolEntry {
-    Utf8(String),
-    Integer(i32),
-    Long(i64),
-    Float(f32),
-    Double(f64),
-    String(String),
-    Class {
-        name: ConstantPoolIndex,
-    },
-    FieldReference {
-        class: ConstantPoolIndex,
-        name_and_type: ConstantPoolIndex,
-    },
-    MethodReference {
-        class: ConstantPoolIndex,
-        name_and_type: ConstantPoolIndex,
-    },
-    InterfaceMethodReference {
-        class: ConstantPoolIndex,
-        name_and_type: ConstantPoolIndex,
-    },
-    NameAndType {
-        name: ConstantPoolIndex,
-        ty: ConstantPoolIndex,
-    },
-}
-
-impl Display for ConstantPoolEntry {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
-    }
-}
-
-pub struct Instance<'c> {
-    class: &'c Class,
-    fields: Vec<JvmValue>,
-}
-
-impl<'c> Instance<'c> {
-    pub fn new(class: &'c Class, fields: &Vec<FieldDescriptor>) -> Self {
-        Self {
-            class,
-            fields: fields
+    pub fn instantiate(&self) -> Instance {
+        Instance {
+            class: self.index,
+            fields: self
+                .field_descriptors
                 .iter()
                 .map(|field| {
-                    if let Some(value) = field.constant_value {
-                        value
+                    if let Some(value) = &field.constant_value {
+                        value.clone()
                     } else {
                         JvmValue::Void
                     }
@@ -260,16 +305,45 @@ impl<'c> Instance<'c> {
         }
     }
 
-    pub fn get_field(&self, name: &str) -> Result<JvmValue, FieldError> {
-        if let Some(local_index) = self.class.field_index_map.get(name) {
-            Ok(self.fields[*local_index])
+    pub fn name(&self) -> Result<&str, ConstantPoolError> {
+        self.resolve_type(self.this_class)
+    }
+}
+
+pub struct Instance {
+    class: ClassIndex,
+    fields: Vec<JvmValue>,
+}
+
+impl Instance {
+    pub fn get_field(&self, name: &str, classes: &LoadedClasses) -> Result<JvmValue, FieldError> {
+        if let Some(local_index) = classes.resolve(self.class).field_index_map.get(name) {
+            Ok(self.fields[*local_index].clone())
         } else {
             Err(FieldError::UnknownStaticField(name.to_string()))
         }
     }
 
-    pub fn get_static_field(&self, name: &str) -> Result<JvmValue, FieldError> {
-        self.class.get_static_field(name)
+    pub fn set_field(
+        &mut self,
+        name: &str,
+        classes: &LoadedClasses,
+        value: JvmValue,
+    ) -> Result<(), FieldError> {
+        if let Some(local_index) = classes.resolve(self.class).field_index_map.get(name) {
+            self.fields[*local_index] = value;
+            Ok(())
+        } else {
+            Err(FieldError::UnknownStaticField(name.to_string()))
+        }
+    }
+
+    pub fn get_static_field(
+        &self,
+        name: &str,
+        classes: &LoadedClasses,
+    ) -> Result<JvmValue, FieldError> {
+        classes.resolve(self.class).get_static_field(name)
     }
 }
 
@@ -289,23 +363,6 @@ pub enum MethodError {
 
     #[error("Unknown static method '#{0}'")]
     UnknownStaticMethod(String),
-}
-
-#[derive(thiserror::Error, Debug)]
-pub enum ConstantPoolError {
-    #[error("there is no constant pool entry at {0}")]
-    MissingEntry(ConstantPoolIndex),
-
-    #[error("the value at index {0} is not loadable (according to JVM §4.4 table 4.4-C")]
-    NotLoadable(ConstantPoolIndex),
-
-    #[error("the value at index {0} is not resolvable to a field")]
-    FieldNotResolvable(ConstantPoolIndex),
-
-    #[error(
-        "The constant pool entry at #{0} is expected to be of type utf 8, but is actually {1}"
-    )]
-    NotAnUtf8String(ConstantPoolIndex, ConstantPoolEntry),
 }
 
 /*

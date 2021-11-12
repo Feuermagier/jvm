@@ -13,18 +13,33 @@ use std::{
 use dynasmrt::{dynasm, DynasmApi, DynasmLabelApi};
 use model::method::Parameters;
 
+use crate::model::{class::LoadedClasses, heap::Heap};
+
 fn main() {
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
         .init();
 
+    let mut classes = LoadedClasses::new();
+    let mut heap = Heap::new();
+
     let mut file = File::open("Test.class").unwrap();
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes).unwrap();
-    let (class_file, mut class) = class_parser::parse(&bytes).unwrap();
+    let (class_file, class) = class_parser::parse(&bytes, &mut classes).unwrap();
     dbg!(class_file);
-    class.bootstrap().unwrap();
-    class.call_static_method("main", Parameters::empty()).unwrap();
+
+    classes
+        .resolve(class)
+        .bootstrap(&classes, &mut heap)
+        .unwrap();
+
+    classes
+        .resolve(class)
+        .call_static_method("main", Parameters::empty(), &classes, &mut heap)
+        .unwrap();
+
+    dbg!(&classes.resolve(class).get_static_field("y"));
 
     /*
     let code = vec![
