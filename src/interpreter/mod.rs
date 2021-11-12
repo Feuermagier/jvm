@@ -743,6 +743,7 @@ pub fn execute_method(
                 pc += 3;
             }
             // + invokestatic, invokevirtual, invokeinterface, invokedynamic
+            
             bytecode::NEW => {
                 let class_name = callee_class.resolve_type(index(code[pc + 1], code[pc + 2]))?;
                 let instance = heap.instantiate(classes.resolve_by_name(class_name));

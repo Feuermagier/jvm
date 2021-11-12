@@ -89,7 +89,6 @@ fn parse_constants(iter: &mut ClassFileIterator) -> Result<ConstantPool, Parsing
     let mut i = 0; // We can't use for because some entries requires us to skip the next entry
     while i < count {
         let tag = iter.byte()?;
-        dbg!(tag);
         match tag {
             // CONSTANT_Utf8
             1 => {

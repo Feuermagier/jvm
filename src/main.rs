@@ -27,12 +27,6 @@ fn main() {
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes).unwrap();
     let (class_file, class) = class_parser::parse(&bytes, &mut classes).unwrap();
-    dbg!(class_file);
-
-    classes
-        .resolve(class)
-        .bootstrap(&classes, &mut heap)
-        .unwrap();
 
     classes
         .resolve(class)

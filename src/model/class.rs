@@ -31,8 +31,6 @@ impl LoadedClasses {
     }
 
     pub fn resolve_by_name(&self, name: &str) -> &Class {
-        dbg!(&self.name_mappings);
-        dbg!(name);
         &self.classes[*self.name_mappings.get(name).unwrap()]
     }
 
@@ -49,8 +47,8 @@ impl LoadedClasses {
         interfaces: Vec<ConstantPoolIndex>,
         static_field_descriptors: Vec<FieldDescriptor>,
         field_descriptors: Vec<FieldDescriptor>,
-        mut static_methods: Vec<Method>,
-        mut methods: Vec<Method>,
+        static_methods: Vec<Method>,
+        methods: Vec<Method>,
     ) -> Result<ClassIndex, ConstantPoolError> {
         let index = self.classes.len();
 
@@ -109,6 +107,7 @@ impl Class {
         mut static_methods: Vec<Method>,
         mut methods: Vec<Method>,
     ) -> Self {
+        dbg!(super_class);
         let static_field_count = static_field_descriptors.len();
         let mut static_field_index_map = HashMap::with_capacity(static_field_count);
         let mut static_fields = Vec::with_capacity(static_field_count);
@@ -225,7 +224,6 @@ impl Class {
     }
 
     fn get_static_method(&self, name: &str) -> Result<&'_ Method, MethodError> {
-        dbg!(&self.static_methods);
         self.static_methods
             .get(name)
             .ok_or_else(|| MethodError::UnknownStaticMethod(name.to_string()))
