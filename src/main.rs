@@ -23,11 +23,13 @@ fn main() {
     let mut classes = LoadedClasses::new();
     let mut heap = Heap::new();
 
+    log::info!("Loading class Object");
     let mut object_file = File::open("classes/Object.class").unwrap();
     let mut bytes = Vec::new();
     object_file.read_to_end(&mut bytes).unwrap();
     let (_, object) = class_parser::parse(&bytes, &mut classes).unwrap();
 
+    log::info!("Loading class Test");
     let mut file = File::open("Test.class").unwrap();
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes).unwrap();

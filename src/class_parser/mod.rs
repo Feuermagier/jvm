@@ -293,6 +293,7 @@ fn parse_methods(
         let code = if let Some(bytecode) = code {
             MethodCode::Bytecode(bytecode)
         } else if is_native(access_flags) {
+            log::info!("Encountered native method '{0}'", name);
             MethodCode::Native(None)
         } else {
             return Err(ParsingError::MissingCode(name));
@@ -310,8 +311,7 @@ fn parse_methods(
             max_locals,
         };
 
-        if access_flags & 0x0008 != 0 {
-            // ACC_STATIC
+        if is_static(access_flags) {
             static_methods.push(method);
         } else {
             methods.push(method);
@@ -369,6 +369,9 @@ fn parse_descriptor(descriptor: &str) -> Result<(Vec<JvmType>, JvmType), Parsing
 
 fn is_native(access_flags: u16) -> bool {
     access_flags & 0x0100 != 0
+}
+fn is_static(access_flags: u16) -> bool {
+    access_flags & 0x0008 != 0
 }
 
 #[derive(thiserror::Error, Debug)]
