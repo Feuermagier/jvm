@@ -1,6 +1,16 @@
 pub mod locals;
 pub mod stack;
-use crate::{bytecode, model::{class::{Class, FieldError, LoadedClasses, MethodError}, constant_pool::{ConstantPoolError, ConstantPoolIndex}, heap::{Heap, HeapIndex}, method::{Method, MethodCode, Parameters}, types::TypeError, value::JvmValue}};
+use crate::{
+    bytecode,
+    model::{
+        class::{Class, FieldError, LoadedClasses, MethodError},
+        constant_pool::{ConstantPoolError, ConstantPoolIndex},
+        heap::{Heap, HeapIndex},
+        method::{Method, MethodCode, Parameters},
+        types::TypeError,
+        value::JvmValue,
+    },
+};
 
 use self::{locals::InterpreterLocals, stack::InterpreterStack};
 
@@ -719,26 +729,60 @@ pub fn execute_method(
             }
             bytecode::PUTFIELD => {
                 let field_name = callee_class.resolve_field(index(code[pc + 1], code[pc + 2]))?;
-                heap.resolve(this.expect("Getting an instance field but this is not bound"))
+                heap.resolve_mut(this.expect("Getting an instance field but this is not bound"))
                     .set_field(field_name, classes, stack.pop())?;
                 pc += 3;
             }
 
             bytecode::INVOKESPECIAL => {
                 let method_index = index(code[pc + 1], code[pc + 2]);
+                //TODO match the signature
                 let (class, name, ty) = callee_class.resolve_method(method_index)?;
                 let class = classes.resolve_by_name(class);
-                class.call_method(
+                let parameters = stack.pop_parameters(class.get_method(name)?.parameters.len());
+                let return_value = class.call_method(
                     name,
-                    Parameters::empty(),
+                    parameters,
                     stack.pop().as_reference()?,
                     classes,
                     heap,
                 )?;
+                if return_value != JvmValue::Void {
+                    stack.push(return_value);
+                }
                 pc += 3;
             }
-            // + invokestatic, invokevirtual, invokeinterface, invokedynamic
-            
+            bytecode::INVOKESTATIC => {
+                let method_index = index(code[pc + 1], code[pc + 2]);
+                let (class, name, ty) = callee_class.resolve_method(method_index)?;
+                let class = classes.resolve_by_name(class);
+                let parameters =
+                    stack.pop_parameters(class.get_static_method(name)?.parameters.len());
+                let return_value = class.call_static_method(name, parameters, classes, heap)?;
+                if return_value != JvmValue::Void {
+                    stack.push(return_value);
+                }
+                pc += 3;
+            }
+            bytecode::INVOKEVIRTUAL => {
+                let method_index = index(code[pc + 1], code[pc + 2]);
+                //TODO match the signature, dynamic lookup
+                let (class, name, ty) = callee_class.resolve_method(method_index)?;
+                let class = classes.resolve_by_name(class);
+                let parameters = stack.pop_parameters(class.get_method(name)?.parameters.len());
+                let return_value = class.call_method(
+                    name,
+                    parameters,
+                    stack.pop().as_reference()?,
+                    classes,
+                    heap,
+                )?;
+                if return_value != JvmValue::Void {
+                    stack.push(return_value);
+                }
+                pc += 3;
+            }
+            // + invokeinterface, invokedynamic
             bytecode::NEW => {
                 let class_name = callee_class.resolve_type(index(code[pc + 1], code[pc + 2]))?;
                 let instance = heap.instantiate(classes.resolve_by_name(class_name));

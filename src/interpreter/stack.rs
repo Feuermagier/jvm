@@ -1,6 +1,6 @@
 use std::fmt::Debug;
 
-use crate::model::value::JvmValue;
+use crate::model::{method::Parameters, value::JvmValue};
 
 pub struct InterpreterStack {
     stack: Vec<JvmValue>,
@@ -23,6 +23,11 @@ impl InterpreterStack {
         self.stack
             .pop()
             .expect("Trying to pop from an empty local stack")
+    }
+
+    #[inline]
+    pub fn pop_parameters(&mut self, count: usize) -> Parameters {
+        Parameters::of(self.stack.drain(self.stack.len() - count..).collect())
     }
 }
 

@@ -5,14 +5,16 @@ public class Test {
     public static void main() {
         y = 10;
         var test = new Test();
+		test.b(42, new Object());
     }
     
-    public static void a() {
+    public static void a(int q) {
         double x = 0;
+		y = q;
     }
     
-    public double b() {
-        this.a();
+    public double b(int x, Object o) {
+        this.a(x);
         
         return x + y;
     }

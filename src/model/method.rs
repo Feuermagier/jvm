@@ -1,17 +1,19 @@
 use core::fmt::Debug;
 
-use super::{value::JvmValue, visibility::Visibility};
+use super::{types::JvmType, value::JvmValue, visibility::Visibility};
 
 #[derive(Debug)]
 pub struct Method {
     pub name: String,
-    pub descriptor: String,
+    pub parameters: Vec<JvmType>,
+    pub return_type: JvmType,
     pub visibility: Visibility,
     pub code: MethodCode,
     pub max_stack: usize,
     pub max_locals: usize,
 }
 
+#[derive(Debug)]
 pub struct Parameters(Vec<JvmValue>);
 
 impl Parameters {

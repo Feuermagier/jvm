@@ -1,11 +1,23 @@
 mod attribute;
 mod iterator;
 
-use std::str::Utf8Error;
+use std::{iter::Peekable, str::Utf8Error};
 
-use unicode_segmentation::UnicodeSegmentation;
+use unicode_segmentation::{Graphemes, UnicodeSegmentation};
 
-use crate::{class_parser::iterator::ClassFileIterator, model::{class::{ClassIndex, LoadedClasses}, class_file::ClassFile, constant_pool::{ConstantPool, ConstantPoolEntry, ConstantPoolError, ConstantPoolIndex}, field::FieldDescriptor, method::{Method, MethodCode}, types::JvmType, value::JvmValue, visibility::Visibility}};
+use crate::{
+    class_parser::iterator::ClassFileIterator,
+    model::{
+        class::{ClassIndex, LoadedClasses},
+        class_file::ClassFile,
+        constant_pool::{ConstantPool, ConstantPoolEntry, ConstantPoolError, ConstantPoolIndex},
+        field::FieldDescriptor,
+        method::{Method, MethodCode},
+        types::{JvmType, TypeReference},
+        value::JvmValue,
+        visibility::Visibility,
+    },
+};
 
 pub fn parse(
     bytes: &[u8],
@@ -160,7 +172,7 @@ fn parse_fields(
 
         let descriptor_index = iter.u16()?;
         let type_string = constant_pool.get_utf8(descriptor_index.into())?;
-        let ty = parse_field_type(type_string)?;
+        let ty = parse_type(&mut type_string.graphemes(true).peekable())?;
 
         let mut constant_value = None;
 
@@ -210,11 +222,10 @@ fn parse_fields(
     Ok((static_fields, fields))
 }
 
-fn parse_field_type(string: &str) -> Result<JvmType, ParsingError> {
-    let mut iter = string.graphemes(true);
-    let tag = iter.next();
+fn parse_type(graphemes: &mut Peekable<Graphemes>) -> Result<JvmType, ParsingError> {
+    let tag = graphemes.next();
     if tag.is_none() {
-        return Err(ParsingError::InvalidFieldType(string.to_string()));
+        return Err(ParsingError::InvalidType(String::new()));
     }
 
     match tag.unwrap() {
@@ -225,13 +236,14 @@ fn parse_field_type(string: &str) -> Result<JvmType, ParsingError> {
         "I" => Ok(JvmType::Integer),
         "J" => Ok(JvmType::Long),
         "S" => Ok(JvmType::Long),
-        "Z" => Ok(JvmType::Long),
+        "Z" => Ok(JvmType::Boolean),
+        "V" => Ok(JvmType::Void),
         "L" => {
-            let class = iter.take_while(|c| *c != ";").collect::<String>();
-            //Ok(JvmType::Reference(class))
-            Ok(JvmType::Reference)
+            let class = graphemes.take_while(|c| *c != ";").collect::<String>();
+            Ok(JvmType::Reference(TypeReference::Unresolved(class)))
         }
-        _ => Err(ParsingError::InvalidFieldType(string.to_string())),
+        "[" => unimplemented!("Arrays are not implemented"),
+        _ => Err(ParsingError::InvalidType(tag.unwrap().to_string())),
     }
 }
 
@@ -249,7 +261,6 @@ fn parse_methods(
 
         let name_index = iter.u16()?;
         let name = constant_pool.get_utf8(name_index.into())?.to_string();
-        dbg!(&name);
 
         let descriptor_index = iter.u16()?;
         let descriptor = constant_pool.get_utf8(descriptor_index.into())?.to_string();
@@ -287,15 +298,17 @@ fn parse_methods(
             return Err(ParsingError::MissingCode(name));
         };
 
+        let (parameters, return_type) = parse_descriptor(&descriptor)?;
+
         let method = Method {
             name,
-            descriptor,
+            parameters,
+            return_type,
             visibility,
-            max_locals,
-            max_stack,
             code,
+            max_stack,
+            max_locals,
         };
-        dbg!(&method);
 
         if access_flags & 0x0008 != 0 {
             // ACC_STATIC
@@ -329,6 +342,31 @@ where
     Ok(())
 }
 
+fn parse_descriptor(descriptor: &str) -> Result<(Vec<JvmType>, JvmType), ParsingError> {
+    let mut graphemes = descriptor.graphemes(true).peekable();
+    if let Some(char) = graphemes.next() {
+        if char != "(" {
+            return Err(ParsingError::DescriptorParseError(descriptor.to_string()));
+        }
+    } else {
+        return Err(ParsingError::DescriptorParseError(descriptor.to_string()));
+    }
+
+    let mut parameters = Vec::new();
+    while graphemes.peek().is_some() && *graphemes.peek().unwrap() != ")" {
+        parameters.push(parse_type(&mut graphemes)?);
+    }
+    
+    // Skip the closing bracket
+    if graphemes.next().is_none() {
+        return Err(ParsingError::DescriptorParseError(descriptor.to_string()));
+    }
+
+    let return_type = parse_type(&mut graphemes)?;
+
+    Ok((parameters, return_type))
+}
+
 fn is_native(access_flags: u16) -> bool {
     access_flags & 0x0100 != 0
 }
@@ -347,8 +385,8 @@ pub enum ParsingError {
     #[error("invalid utf string at constant index {0}: {1}")]
     InvalidUtf8Constant(u16, Utf8Error),
 
-    #[error("invalid field type {0}")]
-    InvalidFieldType(String),
+    #[error("invalid type {0}")]
+    InvalidType(String),
 
     #[error("unexpected attribute while reading an element of type '{0}': {1}")]
     UnexpectedAttribute(String, String),
@@ -364,4 +402,7 @@ pub enum ParsingError {
         #[from]
         source: ConstantPoolError,
     },
+
+    #[error("could not parse method descriptor '{0}'")]
+    DescriptorParseError(String),
 }

@@ -23,7 +23,7 @@ fn main() {
     let mut classes = LoadedClasses::new();
     let mut heap = Heap::new();
 
-    let mut object_file = File::open("Object.class").unwrap();
+    let mut object_file = File::open("classes/Object.class").unwrap();
     let mut bytes = Vec::new();
     object_file.read_to_end(&mut bytes).unwrap();
     let (_, object) = class_parser::parse(&bytes, &mut classes).unwrap();
@@ -44,19 +44,6 @@ fn main() {
         .unwrap();
 
     dbg!(&classes.resolve(class).get_static_field("y"));
-
-    /*
-    let code = vec![
-        Bytecode::Iconst1,
-        Bytecode::Istore(1),
-        Bytecode::Iload(1),
-        Bytecode::Iconst1,
-        Bytecode::Iadd,
-    ];
-
-    let interpreter = Interpreter::new();
-    interpreter.execute_method(&code);
-    */
 
     /*
     let mut ops = dynasmrt::x64::Assembler::new().unwrap();

@@ -11,8 +11,12 @@ impl Heap {
         }
     }
 
-    pub fn resolve(&mut self, index: HeapIndex) -> &mut Instance {
+    pub fn resolve_mut(&mut self, index: HeapIndex) -> &mut Instance {
         &mut self.objects[index.0]
+    }
+
+    pub fn resolve(&self, index: HeapIndex) -> &Instance {
+        &self.objects[index.0]
     }
 
     pub fn instantiate(&mut self, class: &Class) -> HeapIndex {

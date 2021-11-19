@@ -107,7 +107,6 @@ impl Class {
         mut static_methods: Vec<Method>,
         mut methods: Vec<Method>,
     ) -> Self {
-        dbg!(super_class);
         let static_field_count = static_field_descriptors.len();
         let mut static_field_index_map = HashMap::with_capacity(static_field_count);
         let mut static_fields = Vec::with_capacity(static_field_count);
@@ -160,7 +159,7 @@ impl Class {
     ) -> Result<(), ExecutionError> {
         let return_value =
             self.call_static_method("<clinit>", Parameters::empty(), classes, heap)?;
-        return_value.assert_type(JvmType::Void)?;
+        return_value.assert_type(JvmType::Void, heap, classes)?;
         Ok(())
     }
 
@@ -223,13 +222,13 @@ impl Class {
         }
     }
 
-    fn get_static_method(&self, name: &str) -> Result<&'_ Method, MethodError> {
+    pub fn get_static_method(&self, name: &str) -> Result<&'_ Method, MethodError> {
         self.static_methods
             .get(name)
             .ok_or_else(|| MethodError::UnknownStaticMethod(name.to_string()))
     }
 
-    fn get_method(&self, name: &str) -> Result<&'_ Method, MethodError> {
+    pub fn get_method(&self, name: &str) -> Result<&'_ Method, MethodError> {
         self.methods
             .get(name)
             .ok_or_else(|| MethodError::UnknownVirtualMethod(name.to_string()))
@@ -306,6 +305,10 @@ impl Class {
     pub fn name(&self) -> Result<&str, ConstantPoolError> {
         self.resolve_type(self.this_class)
     }
+
+    pub fn index(&self) -> ClassIndex {
+        self.index
+    }
 }
 
 pub struct Instance {
@@ -342,6 +345,10 @@ impl Instance {
         classes: &LoadedClasses,
     ) -> Result<JvmValue, FieldError> {
         classes.resolve(self.class).get_static_field(name)
+    }
+
+    pub fn class(&self) -> ClassIndex {
+        self.class
     }
 }
 
