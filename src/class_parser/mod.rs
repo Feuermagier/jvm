@@ -5,24 +5,11 @@ use std::{iter::Peekable, str::Utf8Error};
 
 use unicode_segmentation::{Graphemes, UnicodeSegmentation};
 
-use crate::{
-    class_parser::iterator::ClassFileIterator,
-    model::{
-        class::{ClassIndex, LoadedClasses},
-        class_file::ClassFile,
-        constant_pool::{ConstantPool, ConstantPoolEntry, ConstantPoolError, ConstantPoolIndex},
-        field::FieldDescriptor,
-        method::{Method, MethodCode},
-        types::{JvmType, TypeReference},
-        value::JvmValue,
-        visibility::Visibility,
-    },
-};
+use crate::{class_parser::iterator::ClassFileIterator, model::{class::{Class, ClassIndex, LoadedClasses}, class_file::ClassFile, constant_pool::{ConstantPool, ConstantPoolEntry, ConstantPoolError, ConstantPoolIndex}, field::FieldDescriptor, method::{Method, MethodCode}, types::{JvmType, TypeReference}, value::JvmValue, visibility::Visibility}};
 
 pub fn parse(
     bytes: &[u8],
-    classes: &mut LoadedClasses,
-) -> Result<(ClassFile, ClassIndex), ParsingError> {
+) -> Result<(ClassFile, Class), ParsingError> {
     let mut iter = ClassFileIterator::new(bytes);
 
     // Magic number
@@ -67,7 +54,7 @@ pub fn parse(
     let class_file = ClassFile::new(minor_version, major_version);
 
     // Create the actual class
-    let class = classes.load(
+    let class = Class::new(
         constant_pool,
         visibility,
         this_class,
@@ -77,7 +64,7 @@ pub fn parse(
         fields,
         static_methods,
         methods,
-    )?;
+    );
 
     Ok((class_file, class))
 }
@@ -172,20 +159,21 @@ fn parse_fields(
 
         let descriptor_index = iter.u16()?;
         let type_string = constant_pool.get_utf8(descriptor_index.into())?;
-        let ty = parse_type(&mut type_string.graphemes(true).peekable())?;
+        let ty = JvmType::parse(&mut type_string.graphemes(true).peekable())
+            .ok_or(ParsingError::InvalidType(type_string.to_string()))?;
 
         let mut constant_value = None;
 
         parse_attributes(iter, constant_pool, |attr_name, _, iter| {
             match attr_name {
-                attribute::ConstantValue => {
+                attribute::CONSTANT_VALUE => {
                     let value_index = iter.u16()?;
                     let constant = constant_pool.get(value_index.into())?;
                     let value = match constant {
-                        ConstantPoolEntry::Integer(value) => JvmValue::Int(*value),
-                        ConstantPoolEntry::Long(value) => JvmValue::Long(*value),
-                        ConstantPoolEntry::Float(value) => JvmValue::Float(*value),
-                        ConstantPoolEntry::Double(value) => JvmValue::Double(*value),
+                        ConstantPoolEntry::Integer(value) => JvmValue::Int((*value).into()),
+                        ConstantPoolEntry::Long(value) => JvmValue::Long((*value).into()),
+                        ConstantPoolEntry::Float(value) => JvmValue::Float((*value).into()),
+                        ConstantPoolEntry::Double(value) => JvmValue::Double((*value).into()),
                         //TODO parse strings
                         _ => {
                             return Err(ParsingError::InvalidConstantValue(format!(
@@ -222,31 +210,6 @@ fn parse_fields(
     Ok((static_fields, fields))
 }
 
-fn parse_type(graphemes: &mut Peekable<Graphemes>) -> Result<JvmType, ParsingError> {
-    let tag = graphemes.next();
-    if tag.is_none() {
-        return Err(ParsingError::InvalidType(String::new()));
-    }
-
-    match tag.unwrap() {
-        "B" => Ok(JvmType::Byte),
-        "C" => Ok(JvmType::Char),
-        "D" => Ok(JvmType::Double),
-        "F" => Ok(JvmType::Float),
-        "I" => Ok(JvmType::Integer),
-        "J" => Ok(JvmType::Long),
-        "S" => Ok(JvmType::Long),
-        "Z" => Ok(JvmType::Boolean),
-        "V" => Ok(JvmType::Void),
-        "L" => {
-            let class = graphemes.take_while(|c| *c != ";").collect::<String>();
-            Ok(JvmType::Reference(TypeReference::Unresolved(class)))
-        }
-        "[" => unimplemented!("Arrays are not implemented"),
-        _ => Err(ParsingError::InvalidType(tag.unwrap().to_string())),
-    }
-}
-
 fn parse_methods(
     iter: &mut ClassFileIterator,
     constant_pool: &ConstantPool,
@@ -270,7 +233,7 @@ fn parse_methods(
         let mut max_locals = 0;
         parse_attributes(iter, constant_pool, |attribute_name, _, iter| {
             match attribute_name {
-                attribute::Code => {
+                attribute::CODE => {
                     max_stack = iter.u16()? as usize;
                     max_locals = iter.u16()? as usize;
                     let code_length = iter.u32()?;
@@ -354,15 +317,19 @@ fn parse_descriptor(descriptor: &str) -> Result<(Vec<JvmType>, JvmType), Parsing
 
     let mut parameters = Vec::new();
     while graphemes.peek().is_some() && *graphemes.peek().unwrap() != ")" {
-        parameters.push(parse_type(&mut graphemes)?);
+        parameters.push(
+            JvmType::parse(&mut graphemes)
+                .ok_or(ParsingError::InvalidType(descriptor.to_string()))?,
+        );
     }
-    
+
     // Skip the closing bracket
     if graphemes.next().is_none() {
         return Err(ParsingError::DescriptorParseError(descriptor.to_string()));
     }
 
-    let return_type = parse_type(&mut graphemes)?;
+    let return_type =
+        JvmType::parse(&mut graphemes).ok_or(ParsingError::InvalidType(descriptor.to_string()))?;
 
     Ok((parameters, return_type))
 }

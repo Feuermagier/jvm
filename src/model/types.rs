@@ -1,4 +1,6 @@
-use std::fmt::Display;
+use std::{fmt::Display, iter::Peekable};
+
+use unicode_segmentation::Graphemes;
 
 use super::class::{ClassIndex, LoadedClasses};
 
@@ -30,7 +32,7 @@ impl JvmType {
             (JvmType::Reference(a), JvmType::Reference(b)) => a.matches(b, classes),
             (JvmType::Short, JvmType::Short) => true,
             (JvmType::Boolean, JvmType::Boolean) => true,
-            _ => false
+            _ => false,
         }
     }
 
@@ -46,7 +48,47 @@ impl JvmType {
             (JvmType::Reference(_), JvmType::Reference(_)) => true,
             (JvmType::Short, JvmType::Short) => true,
             (JvmType::Boolean, JvmType::Boolean) => true,
-            _ => false
+            _ => false,
+        }
+    }
+
+    pub fn size(&self) -> usize {
+        match self {
+            JvmType::Void => 0,
+            JvmType::Byte => 1,
+            JvmType::Char => 1,
+            JvmType::Integer => 4,
+            JvmType::Long => 8,
+            JvmType::Float => 4,
+            JvmType::Double => 8,
+            JvmType::Reference(_) => 2, // TODO
+            JvmType::Short => 2,
+            JvmType::Boolean => 1,
+        }
+    }
+
+    pub fn parse(graphemes: &mut Peekable<Graphemes>) -> Option<JvmType> {
+        let tag = graphemes.next();
+        if tag.is_none() {
+            return None;
+        }
+
+        match tag.unwrap() {
+            "B" => Some(JvmType::Byte),
+            "C" => Some(JvmType::Char),
+            "D" => Some(JvmType::Double),
+            "F" => Some(JvmType::Float),
+            "I" => Some(JvmType::Integer),
+            "J" => Some(JvmType::Long),
+            "S" => Some(JvmType::Long),
+            "Z" => Some(JvmType::Boolean),
+            "V" => Some(JvmType::Void),
+            "L" => {
+                let class = graphemes.take_while(|c| *c != ";").collect::<String>();
+                Some(JvmType::Reference(TypeReference::Unresolved(class)))
+            }
+            "[" => unimplemented!("Arrays are not implemented"),
+            _ => None,
         }
     }
 }
@@ -68,8 +110,8 @@ impl TypeReference {
         match (self, other) {
             (Self::Resolved(a), Self::Resolved(b)) => a == b,
             (Self::Unresolved(a), Self::Unresolved(b)) => a == b,
-            (Self::Resolved(a), Self::Unresolved(b)) => classes.resolve_by_name(b).index() == *a,
-            (Self::Unresolved(a), Self::Resolved(b)) => classes.resolve_by_name(a).index() == *b,
+            (Self::Resolved(a), Self::Unresolved(b)) => classes.resolve(*a).name().unwrap() == b,
+            (Self::Unresolved(a), Self::Resolved(b)) => classes.resolve(*b).name().unwrap() == a,
         }
     }
 }

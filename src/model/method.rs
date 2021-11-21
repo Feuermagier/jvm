@@ -1,5 +1,7 @@
 use core::fmt::Debug;
 
+use crate::interpreter::stack::StackValue;
+
 use super::{types::JvmType, value::JvmValue, visibility::Visibility};
 
 #[derive(Debug)]
@@ -14,10 +16,10 @@ pub struct Method {
 }
 
 #[derive(Debug)]
-pub struct Parameters(Vec<JvmValue>);
+pub struct Parameters(Vec<StackValue>);
 
 impl Parameters {
-    pub fn of(values: Vec<JvmValue>) -> Self {
+    pub fn of(values: Vec<StackValue>) -> Self {
         Self(values)
     }
 
@@ -25,7 +27,7 @@ impl Parameters {
         Self(Vec::new())
     }
 
-    pub fn to_vec(self) -> Vec<JvmValue> {
+    pub fn to_vec(self) -> Vec<StackValue> {
         self.0
     }
 }

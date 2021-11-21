@@ -80,7 +80,6 @@ impl Display for ConstantPoolEntry {
     }
 }
 
-
 #[derive(thiserror::Error, Debug)]
 pub enum ConstantPoolError {
     #[error("there is no constant pool entry at {0}")]
@@ -92,8 +91,11 @@ pub enum ConstantPoolError {
     #[error("the value at index {0} is not resolvable to a field")]
     FieldNotResolvable(ConstantPoolIndex),
 
-    #[error("the value at index {0} is not resolvable to a type")]
+    #[error("the value at index {0} is not resolvable to a class or interface type")]
     TypeNotResolvable(ConstantPoolIndex),
+
+    #[error("the value at index {0} is not a valid type descriptor")]
+    InvalidType(ConstantPoolIndex),
 
     #[error("the value at index {0} is not resolvable to a method reference")]
     MethodNotResolvable(ConstantPoolIndex),

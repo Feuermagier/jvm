@@ -1,71 +1,65 @@
 use std::{cell::RefCell, collections::HashMap};
 
-use crate::{
-    interpreter::{self, ExecutionError},
-    model::{
-        constant_pool::{ConstantPoolEntry, ConstantPoolError},
-        value::JvmValue,
-    },
-};
+use unicode_segmentation::UnicodeSegmentation;
+
+use crate::{class_loader::BootstrapClassLoader, class_parser::{self, ParsingError}, interpreter::{self, ExecutionError}, model::constant_pool::{ConstantPoolEntry, ConstantPoolError}};
 
 use super::{
     constant_pool::{ConstantPool, ConstantPoolIndex},
     field::FieldDescriptor,
+    fields::Fields,
     heap::{Heap, HeapIndex},
     method::{Method, Parameters},
     types::JvmType,
+    value::JvmValue,
     visibility::Visibility,
 };
 
 pub struct LoadedClasses {
     classes: Vec<Class>,
     name_mappings: HashMap<String, usize>,
+    class_loader: BootstrapClassLoader
 }
 
 impl LoadedClasses {
-    pub fn new() -> Self {
+    pub fn new(class_loader: BootstrapClassLoader) -> Self {
         Self {
             classes: Vec::new(),
             name_mappings: HashMap::new(),
+            class_loader
         }
     }
 
-    pub fn resolve_by_name(&self, name: &str) -> &Class {
-        &self.classes[*self.name_mappings.get(name).unwrap()]
+    pub fn resolve_by_name(&mut self, name: &str, heap: &mut Heap) -> &Class {
+        if let Some(index) = self.name_mappings.get(name) {
+            &self.classes[*index]
+        } else {
+            let index = self.load(name, heap).unwrap();
+            self.resolve(index)
+        }
     }
 
     pub fn resolve(&self, index: ClassIndex) -> &Class {
         &self.classes[index.0]
     }
 
+    /// This function should only be called by a class parser
     pub fn load(
         &mut self,
-        constant_pool: ConstantPool,
-        visibility: Visibility,
-        this_class: ConstantPoolIndex,
-        super_class: ConstantPoolIndex,
-        interfaces: Vec<ConstantPoolIndex>,
-        static_field_descriptors: Vec<FieldDescriptor>,
-        field_descriptors: Vec<FieldDescriptor>,
-        static_methods: Vec<Method>,
-        methods: Vec<Method>,
-    ) -> Result<ClassIndex, ConstantPoolError> {
+        name: &str,
+        heap: &mut Heap
+    ) -> Result<ClassIndex, ClassResolveError> {
         let index = self.classes.len();
 
-        let class = Class::new(
-            ClassIndex(index),
-            constant_pool,
-            visibility,
-            this_class,
-            super_class,
-            interfaces,
-            static_field_descriptors,
-            field_descriptors,
-            static_methods,
-            methods,
-        );
+        let bytes = self.class_loader.load_class(name.to_string());
+        let (_class_file, mut class) = class_parser::parse(&bytes)?;
+        class.index = ClassIndex(index);
+
         self.name_mappings.insert(class.name()?.to_string(), index);
         self.classes.push(class);
+
+        self.classes[index].bootstrap(self, heap)?;
+
         Ok(ClassIndex(index))
     }
 }
@@ -73,6 +67,8 @@ impl LoadedClasses {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(transparent)]
 pub struct ClassIndex(usize);
+
+pub const ClassNotLoadedIndex: ClassIndex = ClassIndex(0);
 
 pub struct Class {
     index: ClassIndex,
@@ -84,19 +80,19 @@ pub struct Class {
     interfaces: Vec<ConstantPoolIndex>,
 
     static_field_descriptors: Vec<FieldDescriptor>,
-    static_field_index_map: HashMap<String, usize>,
-    static_fields: RefCell<Vec<JvmValue>>,
+    static_field_offsets: HashMap<String, (usize, JvmType)>,
+    static_fields: RefCell<Fields>,
 
     field_descriptors: Vec<FieldDescriptor>,
-    field_index_map: HashMap<String, usize>,
+    fields_size: usize,
+    field_offsets: HashMap<String, (usize, JvmType)>,
 
     static_methods: HashMap<String, Method>,
     methods: HashMap<String, Method>,
 }
 
 impl Class {
-    fn new(
-        index: ClassIndex,
+    pub fn new(
         constant_pool: ConstantPool,
         visibility: Visibility,
         this_class: ConstantPoolIndex,
@@ -107,24 +103,14 @@ impl Class {
         mut static_methods: Vec<Method>,
         mut methods: Vec<Method>,
     ) -> Self {
-        let static_field_count = static_field_descriptors.len();
-        let mut static_field_index_map = HashMap::with_capacity(static_field_count);
-        let mut static_fields = Vec::with_capacity(static_field_count);
-        for desc in &static_field_descriptors {
-            let index = static_fields.len();
-            static_field_index_map.insert(desc.name.clone(), index);
-            if let Some(value) = &desc.constant_value {
-                static_fields.push(value.clone());
-            } else {
-                static_fields.push(JvmValue::Void);
-            }
-        }
+        let (static_fields_size, static_field_offsets) = place_fields(&static_field_descriptors);
+        let (fields_size, field_offsets) = place_fields(&field_descriptors);
 
-        let field_count = field_descriptors.len();
-        let mut field_index_map = HashMap::with_capacity(field_count);
-        for (i, desc) in field_descriptors.iter().enumerate() {
-            field_index_map.insert(desc.name.clone(), i);
-        }
+        let static_fields = init_fields(
+            &static_field_descriptors,
+            &static_field_offsets,
+            static_fields_size,
+        );
 
         let static_methods = static_methods
             .drain(..)
@@ -136,17 +122,18 @@ impl Class {
             .collect();
 
         Self {
-            index,
+            index: ClassNotLoadedIndex,
             constant_pool,
             visibility,
             this_class,
             super_class,
             interfaces,
             static_field_descriptors,
-            static_field_index_map,
+            static_field_offsets,
             static_fields: RefCell::new(static_fields),
             field_descriptors,
-            field_index_map,
+            fields_size,
+            field_offsets,
             static_methods,
             methods,
         }
@@ -154,22 +141,29 @@ impl Class {
 
     pub fn bootstrap(
         &self,
-        classes: &LoadedClasses,
+        classes: &mut LoadedClasses,
         heap: &mut Heap,
     ) -> Result<(), ExecutionError> {
         let return_value =
             self.call_static_method("<clinit>", Parameters::empty(), classes, heap)?;
-        return_value.assert_type(JvmType::Void, heap, classes)?;
         Ok(())
     }
 
-    pub fn resolve_field(&self, index: ConstantPoolIndex) -> Result<&'_ str, ConstantPoolError> {
+    pub fn resolve_field(
+        &self,
+        index: ConstantPoolIndex,
+    ) -> Result<(&'_ str, JvmType), ConstantPoolError> {
         match self.constant_pool.get(index)? {
             //TODO use the class
             ConstantPoolEntry::FieldReference { name_and_type, .. } => {
                 match self.constant_pool.get(*name_and_type)? {
-                    ConstantPoolEntry::NameAndType { name, .. } => {
-                        self.constant_pool.get_utf8(*name)
+                    ConstantPoolEntry::NameAndType { name, ty } => {
+                        let ty_str = self.constant_pool.get_utf8(*ty)?;
+                        Ok((
+                            self.constant_pool.get_utf8(*name)?,
+                            JvmType::parse(&mut ty_str.graphemes(true).peekable())
+                                .ok_or(ConstantPoolError::InvalidType(*ty))?,
+                        ))
                     }
                     _ => Err(ConstantPoolError::FieldNotResolvable(index)),
                 }
@@ -206,16 +200,35 @@ impl Class {
     }
 
     pub fn get_static_field(&self, name: &str) -> Result<JvmValue, FieldError> {
-        if let Some(local_index) = self.static_field_index_map.get(name) {
-            Ok(self.static_fields.borrow()[*local_index].clone())
+        if let Some((offset, ty)) = self.static_field_offsets.get(name) {
+            match ty {
+                JvmType::Void => Ok(JvmValue::Void),
+                JvmType::Byte => todo!(),
+                JvmType::Char => todo!(),
+                JvmType::Integer => Ok(JvmValue::Int(self.static_fields.borrow().get_int(*offset))),
+                JvmType::Long => Ok(JvmValue::Long(
+                    self.static_fields.borrow().get_long(*offset),
+                )),
+                JvmType::Float => Ok(JvmValue::Float(
+                    self.static_fields.borrow().get_float(*offset),
+                )),
+                JvmType::Double => Ok(JvmValue::Double(
+                    self.static_fields.borrow().get_double(*offset),
+                )),
+                JvmType::Reference(_) => Ok(JvmValue::Reference(
+                    self.static_fields.borrow().get_reference(*offset),
+                )),
+                JvmType::Short => todo!(),
+                JvmType::Boolean => todo!(),
+            }
         } else {
             Err(FieldError::UnknownStaticField(name.to_string()))
         }
     }
 
     pub fn set_static_field(&self, name: &str, value: JvmValue) -> Result<(), FieldError> {
-        if let Some(local_index) = self.static_field_index_map.get(name) {
-            self.static_fields.borrow_mut()[*local_index] = value;
+        if let Some((offset, ty)) = self.static_field_offsets.get(name) {
+            self.static_fields.borrow_mut().set_value(*offset, value);
             Ok(())
         } else {
             Err(FieldError::UnknownStaticField(name.to_string()))
@@ -238,7 +251,7 @@ impl Class {
         &self,
         name: &str,
         parameters: Parameters,
-        classes: &LoadedClasses,
+        classes: &mut LoadedClasses,
         heap: &mut Heap,
     ) -> Result<JvmValue, ExecutionError> {
         // Resolve the method in super classes
@@ -257,7 +270,7 @@ impl Class {
         name: &str,
         parameters: Parameters,
         this: HeapIndex,
-        classes: &LoadedClasses,
+        classes: &mut LoadedClasses,
         heap: &mut Heap,
     ) -> Result<JvmValue, ExecutionError> {
         // Resolve the method in super classes
@@ -274,10 +287,10 @@ impl Class {
     pub fn get_loadable(&self, index: ConstantPoolIndex) -> Result<JvmValue, ConstantPoolError> {
         let value = self.constant_pool.get(index)?;
         match value {
-            ConstantPoolEntry::Integer(value) => Ok(JvmValue::Int(*value)),
-            ConstantPoolEntry::Long(value) => Ok(JvmValue::Long(*value)),
-            ConstantPoolEntry::Float(value) => Ok(JvmValue::Float(*value)),
-            ConstantPoolEntry::Double(value) => Ok(JvmValue::Double(*value)),
+            ConstantPoolEntry::Integer(value) => Ok(JvmValue::Int((*value).into())),
+            ConstantPoolEntry::Long(value) => Ok(JvmValue::Long((*value).into())),
+            ConstantPoolEntry::Float(value) => Ok(JvmValue::Float((*value).into())),
+            ConstantPoolEntry::Double(value) => Ok(JvmValue::Double((*value).into())),
             ConstantPoolEntry::String(_) => todo!(),
             ConstantPoolEntry::Class { .. } => todo!(),
             // + MethodHandle, MethodType, Dynamic
@@ -288,17 +301,11 @@ impl Class {
     pub fn instantiate(&self) -> Instance {
         Instance {
             class: self.index,
-            fields: self
-                .field_descriptors
-                .iter()
-                .map(|field| {
-                    if let Some(value) = &field.constant_value {
-                        value.clone()
-                    } else {
-                        JvmValue::Void
-                    }
-                })
-                .collect(),
+            fields: init_fields(
+                &self.field_descriptors,
+                &self.field_offsets,
+                self.fields_size,
+            ),
         }
     }
 
@@ -313,13 +320,26 @@ impl Class {
 
 pub struct Instance {
     class: ClassIndex,
-    fields: Vec<JvmValue>,
+    fields: Fields,
 }
 
 impl Instance {
-    pub fn get_field(&self, name: &str, classes: &LoadedClasses) -> Result<JvmValue, FieldError> {
-        if let Some(local_index) = classes.resolve(self.class).field_index_map.get(name) {
-            Ok(self.fields[*local_index].clone())
+    pub fn get_field(&self, name: &str, classes: &mut LoadedClasses) -> Result<JvmValue, FieldError> {
+        if let Some((offset, ty)) = classes.resolve(self.class).field_offsets.get(name) {
+            match ty {
+                JvmType::Void => Ok(JvmValue::Void),
+                JvmType::Byte => todo!(),
+                JvmType::Char => todo!(),
+                JvmType::Integer => Ok(JvmValue::Int(self.fields.get_int(*offset))),
+                JvmType::Long => Ok(JvmValue::Long(self.fields.get_long(*offset))),
+                JvmType::Float => Ok(JvmValue::Float(self.fields.get_float(*offset))),
+                JvmType::Double => Ok(JvmValue::Double(self.fields.get_double(*offset))),
+                JvmType::Reference(_) => {
+                    Ok(JvmValue::Reference(self.fields.get_reference(*offset)))
+                }
+                JvmType::Short => todo!(),
+                JvmType::Boolean => todo!(),
+            }
         } else {
             Err(FieldError::UnknownStaticField(name.to_string()))
         }
@@ -331,25 +351,57 @@ impl Instance {
         classes: &LoadedClasses,
         value: JvmValue,
     ) -> Result<(), FieldError> {
-        if let Some(local_index) = classes.resolve(self.class).field_index_map.get(name) {
-            self.fields[*local_index] = value;
+        if let Some((offset, ty)) = classes.resolve(self.class).field_offsets.get(name) {
+            self.fields.set_value(*offset, value);
             Ok(())
         } else {
             Err(FieldError::UnknownStaticField(name.to_string()))
         }
     }
 
-    pub fn get_static_field(
-        &self,
-        name: &str,
-        classes: &LoadedClasses,
-    ) -> Result<JvmValue, FieldError> {
-        classes.resolve(self.class).get_static_field(name)
-    }
-
     pub fn class(&self) -> ClassIndex {
         self.class
     }
+}
+
+fn place_fields(descriptors: &Vec<FieldDescriptor>) -> (usize, HashMap<String, (usize, JvmType)>) {
+    let count = descriptors.len();
+    let mut offset_map = HashMap::with_capacity(count);
+    let mut offset = 0;
+    for desc in descriptors {
+        let size = desc.ty.size();
+        offset_map.insert(desc.name.clone(), (offset, desc.ty.clone()));
+        offset += size;
+    }
+
+    (offset, offset_map)
+}
+
+fn init_fields(
+    descriptors: &Vec<FieldDescriptor>,
+    offsets: &HashMap<String, (usize, JvmType)>,
+    length: usize,
+) -> Fields {
+    let mut fields = Fields::new(length);
+    for desc in descriptors {
+        if let Some(value) = desc.constant_value {
+            let (offset, ty) = &offsets[&desc.name];
+            fields.set_value(*offset, value);
+        }
+    }
+    fields
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum ClassResolveError {
+    #[error(transparent)]
+    ConstantPool(#[from] ConstantPoolError),
+
+    #[error(transparent)]
+    ClassParsing(#[from] ParsingError),
+
+    #[error(transparent)]
+    ClassInitialization(#[from] ExecutionError)
 }
 
 #[derive(thiserror::Error, Debug)]

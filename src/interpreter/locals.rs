@@ -1,56 +1,35 @@
-use std::vec;
+use crate::model::{heap::HeapIndex, method::Parameters, value::JvmReference};
 
-use crate::model::{class::Instance, method::Parameters, value::JvmValue};
+use super::stack::StackValue;
 
 pub struct InterpreterLocals {
-    locals: Vec<JvmValue>,
-    this: Option<JvmValue>,
+    locals: Vec<StackValue>,
 }
 
 impl InterpreterLocals {
-    pub fn new(capacity: usize, parameters: Parameters, this: Option<JvmValue>) -> Self {
-        let mut locals = parameters.to_vec();
+    pub fn new(capacity: usize, parameters: Parameters, this: Option<HeapIndex>) -> Self {
+        let mut locals = if let Some(this) = this {
+            let mut locals = vec![StackValue::from_reference(JvmReference::from_heap_index(this))];
+            locals.extend(parameters.to_vec());
+            locals
+        } else {
+            parameters.to_vec()
+        };
         let locals_count = capacity - locals.len();
         locals.reserve_exact(locals_count);
 
         for _ in 0..locals_count {
-            locals.push(JvmValue::Void);
+            locals.push(StackValue::default());
         }
 
-        Self {
-            locals: locals,
-            this,
-        }
+        Self { locals }
     }
 
-    pub fn get(&self, index: usize) -> JvmValue {
-        if let Some(this) = &self.this {
-            if index == 0 {
-                this.clone()
-            } else {
-                self.locals[index - 1].clone()
-            }
-        } else {
-            self.locals[index].clone()
-        }
+    pub fn get(&self, index: usize) -> StackValue {
+        self.locals[index]
     }
 
-    pub fn iget(&self, index: usize) -> i32 {
-        let value = self.locals[index].clone();
-        match value {
-            JvmValue::Int(value) => value,
-            _ => panic!(
-                "Expected an int value in local variable #{}, but got a {}",
-                index, value
-            ),
-        }
-    }
-
-    pub fn set(&mut self, index: usize, value: JvmValue) {
+    pub fn set(&mut self, index: usize, value: StackValue) {
         self.locals[index] = value;
-    }
-
-    pub fn iset(&mut self, index: usize, value: i32) {
-        self.locals[index] = JvmValue::Int(value);
     }
 }

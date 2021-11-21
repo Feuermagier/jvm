@@ -2,13 +2,17 @@ pub mod locals;
 pub mod stack;
 use crate::{
     bytecode,
+    interpreter::stack::{StackValue, StackValueWide},
     model::{
         class::{Class, FieldError, LoadedClasses, MethodError},
         constant_pool::{ConstantPoolError, ConstantPoolIndex},
         heap::{Heap, HeapIndex},
         method::{Method, MethodCode, Parameters},
         types::TypeError,
-        value::JvmValue,
+        value::{
+            JvmDouble, JvmFloat, JvmInt, JvmLong, JvmReference, JvmValue, JVM_EQUAL, JVM_GREATER,
+            JVM_LESS,
+        },
     },
 };
 
@@ -19,110 +23,110 @@ pub fn execute_method(
     parameters: Parameters,
     callee_class: &Class,
     this: Option<HeapIndex>,
-    classes: &LoadedClasses,
+    classes: &mut LoadedClasses,
     heap: &mut Heap,
 ) -> Result<JvmValue, ExecutionError> {
+    //println!("========= Entered method {0}", &method.name);
+
     let code = &method.code;
     let code = match code {
         MethodCode::Bytecode(code) => code,
         MethodCode::Native(_) => todo!(),
     };
 
-    let mut locals = InterpreterLocals::new(
-        method.max_locals,
-        parameters,
-        this.map(|this| JvmValue::Reference(this)),
-    );
+    let mut locals = InterpreterLocals::new(method.max_locals, parameters, this);
     let mut stack = InterpreterStack::new(method.max_stack);
 
     let mut pc = 0;
 
-    loop {
+    let return_value = loop {
         if pc >= code.len() {
             break Err(ExecutionError::MissingReturn);
         }
+
         let opcode = code[pc];
-        println!("{:#04x}", opcode);
+        //println!("{:#04x}", opcode);
         match opcode {
             bytecode::ICONST_M1 => {
-                stack.push(JvmValue::Int(-1));
+                stack.push(StackValue::from_int(JvmInt(-1)));
                 pc += 1;
             }
             bytecode::ICONST_0 => {
-                stack.push(JvmValue::Int(0));
+                stack.push(StackValue::from_int(JvmInt(0)));
                 pc += 1;
             }
             bytecode::ICONST_1 => {
-                stack.push(JvmValue::Int(1));
+                stack.push(StackValue::from_int(JvmInt(1)));
                 pc += 1;
             }
             bytecode::ICONST_2 => {
-                stack.push(JvmValue::Int(2));
+                stack.push(StackValue::from_int(JvmInt(2)));
                 pc += 1;
             }
             bytecode::ICONST_3 => {
-                stack.push(JvmValue::Int(3));
+                stack.push(StackValue::from_int(JvmInt(3)));
                 pc += 1;
             }
             bytecode::ICONST_4 => {
-                stack.push(JvmValue::Int(4));
+                stack.push(StackValue::from_int(JvmInt(4)));
                 pc += 1;
             }
             bytecode::ICONST_5 => {
-                stack.push(JvmValue::Int(5));
+                stack.push(StackValue::from_int(JvmInt(5)));
                 pc += 1;
             }
             bytecode::LCONST_0 => {
-                stack.push(JvmValue::Long(0));
+                stack.push_wide(StackValue::from_long(JvmLong(0)));
                 pc += 1;
             }
             bytecode::LCONST_1 => {
-                stack.push(JvmValue::Long(1));
+                stack.push_wide(StackValue::from_long(JvmLong(1)));
                 pc += 1;
             }
             bytecode::FCONST_0 => {
-                stack.push(JvmValue::Float(0.0));
+                stack.push(StackValue::from_float(JvmFloat(0.0f32)));
                 pc += 1;
             }
             bytecode::FCONST_1 => {
-                stack.push(JvmValue::Float(1.0));
+                stack.push(StackValue::from_float(JvmFloat(1.0f32)));
                 pc += 1;
             }
             bytecode::FCONST_2 => {
-                stack.push(JvmValue::Float(2.0));
+                stack.push(StackValue::from_float(JvmFloat(2.0f32)));
                 pc += 1;
             }
             bytecode::DCONST_0 => {
-                stack.push(JvmValue::Double(0.0));
+                stack.push_wide(StackValue::from_double(JvmDouble(0.0)));
                 pc += 1;
             }
             bytecode::DCONST_1 => {
-                stack.push(JvmValue::Double(1.0));
+                stack.push_wide(StackValue::from_double(JvmDouble(1.0)));
                 pc += 1;
             }
 
             bytecode::BIPUSH => {
-                stack.push(JvmValue::Int(code[pc + 1] as i32));
+                stack.push(StackValue::from_int(JvmInt(code[pc + 1] as i32)));
                 pc += 2;
             }
             bytecode::SIPUSH => {
-                stack.push(JvmValue::Int(
-                    i16::from_be_bytes([code[pc + 1], code[pc + 2]]) as i32,
-                ));
+                stack.push(StackValue::from_int(JvmInt(i16::from_be_bytes([
+                    code[pc + 1],
+                    code[pc + 2],
+                ]) as i32)));
                 pc += 3;
             }
 
             bytecode::LDC => {
                 let index = ConstantPoolIndex::from(code[pc + 1] as u16);
                 let value = callee_class.get_loadable(index)?;
-                stack.push(value);
+                stack.push_value(value);
                 pc += 1;
             }
             bytecode::LDC_W | bytecode::LDC2_W => {
                 let index =
                     ConstantPoolIndex::from(u16::from_be_bytes([code[pc + 1], code[pc + 2]]));
                 let value = callee_class.get_loadable(index)?;
-                stack.push(value);
+                stack.push_value(value);
                 pc += 3;
             }
 
@@ -220,26 +224,20 @@ pub fn execute_method(
                 pc += 1;
             }
             bytecode::POP2 => {
-                let tos = stack.pop();
-                match tos {
-                    JvmValue::Long(_) | JvmValue::Double(_) => {}
-                    _ => {
-                        stack.pop();
-                    }
-                }
+                stack.pop_wide();
                 pc += 1;
             }
 
             bytecode::DUP => {
                 let tos = stack.pop();
-                stack.push(tos.clone());
+                stack.push(tos);
                 stack.push(tos);
                 pc += 1;
             }
             bytecode::DUP_X1 => {
                 let top = stack.pop();
                 let second = stack.pop();
-                stack.push(top.clone());
+                stack.push(top);
                 stack.push(second);
                 stack.push(top);
                 pc += 1;
@@ -248,7 +246,7 @@ pub fn execute_method(
                 let top = stack.pop();
                 let second = stack.pop();
                 let third = stack.pop();
-                stack.push(top.clone());
+                stack.push(top);
                 stack.push(third);
                 stack.push(second);
                 stack.push(top);
@@ -256,19 +254,11 @@ pub fn execute_method(
             }
             bytecode::DUP2 => {
                 let top = stack.pop();
-                match top {
-                    JvmValue::Double(_) | JvmValue::Long(_) => {
-                        stack.push(top.clone());
-                        stack.push(top);
-                    }
-                    _ => {
-                        let second = stack.pop();
-                        stack.push(second.clone());
-                        stack.push(top.clone());
-                        stack.push(second);
-                        stack.push(top);
-                    }
-                }
+                let second = stack.pop();
+                stack.push(second);
+                stack.push(top);
+                stack.push(second);
+                stack.push(top);
                 pc += 1;
             }
 
@@ -281,181 +271,181 @@ pub fn execute_method(
             }
 
             bytecode::IADD => {
-                let op2 = stack.pop().as_int()?;
-                let op1 = stack.pop().as_int()?;
-                stack.push(JvmValue::Int(op1.wrapping_add(op2)));
+                let op2 = stack.pop().as_int();
+                let op1 = stack.pop().as_int();
+                stack.push(StackValue::from_int(JvmInt(op1.0.wrapping_add(op2.0))));
                 pc += 1;
             }
             bytecode::LADD => {
-                let op2 = stack.pop().as_long()?;
-                let op1 = stack.pop().as_long()?;
-                stack.push(JvmValue::Long(op1.wrapping_add(op2)));
+                let op2 = stack.pop_wide().as_long();
+                let op1 = stack.pop_wide().as_long();
+                stack.push_wide(StackValue::from_long(JvmLong(op1.0.wrapping_add(op2.0))));
                 pc += 1;
             }
             bytecode::FADD => {
-                let op2 = stack.pop().as_float()?;
-                let op1 = stack.pop().as_float()?;
-                stack.push(JvmValue::Float(op1 + op2));
+                let op2 = stack.pop().as_float();
+                let op1 = stack.pop().as_float();
+                stack.push(StackValue::from_float(JvmFloat(op1.0 + op2.0)));
                 pc += 1;
             }
             bytecode::DADD => {
-                let op2 = stack.pop().as_double()?;
-                let op1 = stack.pop().as_double()?;
-                stack.push(JvmValue::Double(op1 + op2));
+                let op2 = stack.pop_wide().as_double();
+                let op1 = stack.pop_wide().as_double();
+                stack.push_wide(StackValue::from_double(JvmDouble(op1.0 + op2.0)));
                 pc += 1;
             }
             bytecode::ISUB => {
-                let op2 = stack.pop().as_int()?;
-                let op1 = stack.pop().as_int()?;
-                stack.push(JvmValue::Int(op1.wrapping_sub(op2)));
+                let op2 = stack.pop().as_int();
+                let op1 = stack.pop().as_int();
+                stack.push(StackValue::from_int(JvmInt(op1.0.wrapping_sub(op2.0))));
                 pc += 1;
             }
             bytecode::LSUB => {
-                let op2 = stack.pop().as_long()?;
-                let op1 = stack.pop().as_long()?;
-                stack.push(JvmValue::Long(op1.wrapping_sub(op2)));
+                let op2 = stack.pop_wide().as_long();
+                let op1 = stack.pop_wide().as_long();
+                stack.push_wide(StackValue::from_long(JvmLong(op1.0.wrapping_sub(op2.0))));
                 pc += 1;
             }
             bytecode::FSUB => {
-                let op2 = stack.pop().as_float()?;
-                let op1 = stack.pop().as_float()?;
-                stack.push(JvmValue::Float(op1 - op2));
+                let op2 = stack.pop().as_float();
+                let op1 = stack.pop().as_float();
+                stack.push(StackValue::from_float(JvmFloat(op1.0 - op2.0)));
                 pc += 1;
             }
             bytecode::DSUB => {
-                let op2 = stack.pop().as_double()?;
-                let op1 = stack.pop().as_double()?;
-                stack.push(JvmValue::Double(op1 - op2));
+                let op2 = stack.pop_wide().as_double();
+                let op1 = stack.pop_wide().as_double();
+                stack.push_wide(StackValue::from_double(JvmDouble(op1.0 - op2.0)));
                 pc += 1;
             }
             bytecode::IMUL => {
-                let op2 = stack.pop().as_int()?;
-                let op1 = stack.pop().as_int()?;
-                stack.push(JvmValue::Int(op1.wrapping_mul(op2)));
+                let op2 = stack.pop().as_int();
+                let op1 = stack.pop().as_int();
+                stack.push(StackValue::from_int(JvmInt(op1.0.wrapping_mul(op2.0))));
                 pc += 1;
             }
             bytecode::LMUL => {
-                let op2 = stack.pop().as_long()?;
-                let op1 = stack.pop().as_long()?;
-                stack.push(JvmValue::Long(op1.wrapping_mul(op2)));
+                let op2 = stack.pop_wide().as_long();
+                let op1 = stack.pop_wide().as_long();
+                stack.push_wide(StackValue::from_long(JvmLong(op1.0.wrapping_mul(op2.0))));
                 pc += 1;
             }
             bytecode::FMUL => {
-                let op2 = stack.pop().as_float()?;
-                let op1 = stack.pop().as_float()?;
-                stack.push(JvmValue::Float(op1 * op2));
+                let op2 = stack.pop().as_float();
+                let op1 = stack.pop().as_float();
+                stack.push(StackValue::from_float(JvmFloat(op1.0 * op2.0)));
                 pc += 1;
             }
             bytecode::DMUL => {
-                let op2 = stack.pop().as_double()?;
-                let op1 = stack.pop().as_double()?;
-                stack.push(JvmValue::Double(op1 * op2));
+                let op2 = stack.pop_wide().as_double();
+                let op1 = stack.pop_wide().as_double();
+                stack.push_wide(StackValue::from_double(JvmDouble(op1.0 * op2.0)));
                 pc += 1;
             }
             bytecode::IDIV => {
-                let op2 = stack.pop().as_int()?;
-                let op1 = stack.pop().as_int()?;
-                stack.push(JvmValue::Int(op1.wrapping_div(op2)));
+                let op2 = stack.pop().as_int();
+                let op1 = stack.pop().as_int();
+                stack.push(StackValue::from_int(JvmInt(op1.0.wrapping_div(op2.0))));
                 pc += 1;
             }
             bytecode::LDIV => {
-                let op2 = stack.pop().as_long()?;
-                let op1 = stack.pop().as_long()?;
-                stack.push(JvmValue::Long(op1.wrapping_div(op2)));
+                let op2 = stack.pop_wide().as_long();
+                let op1 = stack.pop_wide().as_long();
+                stack.push_wide(StackValue::from_long(JvmLong(op1.0.wrapping_div(op2.0))));
                 pc += 1;
             }
             bytecode::FDIV => {
-                let op2 = stack.pop().as_float()?;
-                let op1 = stack.pop().as_float()?;
-                stack.push(JvmValue::Float(op1 / op2));
+                let op2 = stack.pop().as_float();
+                let op1 = stack.pop().as_float();
+                stack.push(StackValue::from_float(JvmFloat(op1.0 / op2.0)));
                 pc += 1;
             }
             bytecode::DDIV => {
-                let op2 = stack.pop().as_double()?;
-                let op1 = stack.pop().as_double()?;
-                stack.push(JvmValue::Double(op1 / op2));
+                let op2 = stack.pop_wide().as_double();
+                let op1 = stack.pop_wide().as_double();
+                stack.push_wide(StackValue::from_double(JvmDouble(op1.0 / op2.0)));
                 pc += 1;
             }
             bytecode::IREM => {
-                let op2 = stack.pop().as_int()?;
-                let op1 = stack.pop().as_int()?;
-                stack.push(JvmValue::Int(op1 % op2));
+                let op2 = stack.pop().as_int();
+                let op1 = stack.pop().as_int();
+                stack.push(StackValue::from_int(JvmInt(op1.0 % op2.0)));
                 pc += 1;
             }
             bytecode::LREM => {
-                let op2 = stack.pop().as_long()?;
-                let op1 = stack.pop().as_long()?;
-                stack.push(JvmValue::Long(op1 % op2));
+                let op2 = stack.pop_wide().as_long();
+                let op1 = stack.pop_wide().as_long();
+                stack.push_wide(StackValue::from_long(JvmLong(op1.0 % op2.0)));
                 pc += 1;
             }
             bytecode::FREM => {
-                let op2 = stack.pop().as_float()?;
-                let op1 = stack.pop().as_float()?;
-                stack.push(JvmValue::Float(op1 % op2));
+                let op2 = stack.pop().as_float();
+                let op1 = stack.pop().as_float();
+                stack.push(StackValue::from_float(JvmFloat(op1.0 % op2.0)));
                 pc += 1;
             }
             bytecode::DREM => {
-                let op2 = stack.pop().as_double()?;
-                let op1 = stack.pop().as_double()?;
-                stack.push(JvmValue::Double(op1 % op2));
+                let op2 = stack.pop_wide().as_double();
+                let op1 = stack.pop_wide().as_double();
+                stack.push_wide(StackValue::from_double(JvmDouble(op1.0 % op2.0)));
                 pc += 1;
             }
             bytecode::INEG => {
-                let op1 = stack.pop().as_int()?;
-                stack.push(JvmValue::Int(-op1));
+                let op1 = stack.pop().as_int();
+                stack.push(StackValue::from_int(JvmInt(-op1.0)));
                 pc += 1;
             }
             bytecode::LNEG => {
-                let op1 = stack.pop().as_long()?;
-                stack.push(JvmValue::Long(-op1));
+                let op1 = stack.pop_wide().as_long();
+                stack.push_wide(StackValue::from_long(JvmLong(-op1.0)));
                 pc += 1;
             }
             bytecode::FNEG => {
-                let op1 = stack.pop().as_float()?;
-                stack.push(JvmValue::Float(-op1));
+                let op1 = stack.pop().as_float();
+                stack.push(StackValue::from_float(JvmFloat(-op1.0)));
                 pc += 1;
             }
             bytecode::DNEG => {
-                let op1 = stack.pop().as_double()?;
-                stack.push(JvmValue::Double(-op1));
+                let op1 = stack.pop_wide().as_double();
+                stack.push_wide(StackValue::from_double(JvmDouble(-op1.0)));
                 pc += 1;
             }
 
             // + Shifts
             bytecode::IAND => {
-                let op2 = stack.pop().as_int()?;
-                let op1 = stack.pop().as_int()?;
-                stack.push(JvmValue::Int(op1 & op2));
+                let op2 = stack.pop().as_int();
+                let op1 = stack.pop().as_int();
+                stack.push(StackValue::from_int(JvmInt(op1.0 & op2.0)));
                 pc += 1;
             }
             bytecode::LAND => {
-                let op2 = stack.pop().as_long()?;
-                let op1 = stack.pop().as_long()?;
-                stack.push(JvmValue::Long(op1 & op2));
+                let op2 = stack.pop_wide().as_long();
+                let op1 = stack.pop_wide().as_long();
+                stack.push_wide(StackValue::from_long(JvmLong(op1.0 & op2.0)));
                 pc += 1;
             }
             bytecode::IOR => {
-                let op2 = stack.pop().as_int()?;
-                let op1 = stack.pop().as_int()?;
-                stack.push(JvmValue::Int(op1 | op2));
+                let op2 = stack.pop().as_int();
+                let op1 = stack.pop().as_int();
+                stack.push(StackValue::from_int(JvmInt(op1.0 | op2.0)));
                 pc += 1;
             }
             bytecode::LOR => {
-                let op2 = stack.pop().as_long()?;
-                let op1 = stack.pop().as_long()?;
-                stack.push(JvmValue::Long(op1 | op2));
+                let op2 = stack.pop_wide().as_long();
+                let op1 = stack.pop_wide().as_long();
+                stack.push_wide(StackValue::from_long(JvmLong(op1.0 | op2.0)));
                 pc += 1;
             }
             bytecode::IXOR => {
-                let op2 = stack.pop().as_int()?;
-                let op1 = stack.pop().as_int()?;
-                stack.push(JvmValue::Int(op1 ^ op2));
+                let op2 = stack.pop().as_int();
+                let op1 = stack.pop().as_int();
+                stack.push(StackValue::from_int(JvmInt(op1.0 ^ op2.0)));
                 pc += 1;
             }
             bytecode::LXOR => {
-                let op2 = stack.pop().as_long()?;
-                let op1 = stack.pop().as_long()?;
-                stack.push(JvmValue::Long(op1 ^ op2));
+                let op2 = stack.pop_wide().as_long();
+                let op1 = stack.pop_wide().as_long();
+                stack.push_wide(StackValue::from_long(JvmLong(op1.0 ^ op2.0)));
                 pc += 1;
             }
 
@@ -464,273 +454,301 @@ pub fn execute_method(
                 let increment = unsafe { std::mem::transmute::<u8, i8>(code[pc + 2]) } as i32;
                 locals.set(
                     index,
-                    JvmValue::Int(locals.get(index).as_int()? + increment),
+                    StackValue::from_int(JvmInt(locals.get(index).as_int().0 + increment)),
                 );
                 pc += 3;
             }
 
             bytecode::I2L => {
-                let value = stack.pop().as_int()?;
-                stack.push(JvmValue::Long(value as i64));
+                let value = stack.pop().as_int();
+                stack.push_wide(StackValue::from_long(JvmLong(value.0 as i64)));
                 pc += 1;
             }
             bytecode::I2F => {
-                let value = stack.pop().as_int()?;
-                stack.push(JvmValue::Float(value as f32));
+                let value = stack.pop().as_int();
+                stack.push(StackValue::from_float(JvmFloat(value.0 as f32)));
                 pc += 1;
             }
             bytecode::I2D => {
-                let value = stack.pop().as_int()?;
-                stack.push(JvmValue::Double(value as f64));
+                let value = stack.pop().as_int();
+                stack.push_wide(StackValue::from_double(JvmDouble(value.0 as f64)));
                 pc += 1;
             }
             bytecode::L2I => {
-                let value = stack.pop().as_long()?;
-                stack.push(JvmValue::Int(value as i32));
+                let value = stack.pop_wide().as_long();
+                stack.push(StackValue::from_int(JvmInt(value.0 as i32)));
                 pc += 1;
             }
             bytecode::L2F => {
-                let value = stack.pop().as_long()?;
-                stack.push(JvmValue::Float(value as f32));
+                let value = stack.pop_wide().as_long();
+                stack.push(StackValue::from_float(JvmFloat(value.0 as f32)));
                 pc += 1;
             }
             bytecode::L2D => {
-                let value = stack.pop().as_long()?;
-                stack.push(JvmValue::Double(value as f64));
+                let value = stack.pop_wide().as_long();
+                stack.push_wide(StackValue::from_double(JvmDouble(value.0 as f64)));
                 pc += 1;
             }
             bytecode::F2I => {
-                let value = stack.pop().as_float()?;
-                stack.push(JvmValue::Int(value as i32));
+                let value = stack.pop().as_float();
+                stack.push(StackValue::from_int(JvmInt(value.0 as i32)));
                 pc += 1;
             }
             bytecode::F2L => {
-                let value = stack.pop().as_float()?;
-                stack.push(JvmValue::Long(value as i64));
+                let value = stack.pop().as_float();
+                stack.push_wide(StackValue::from_long(JvmLong(value.0 as i64)));
                 pc += 1;
             }
             bytecode::F2D => {
-                let value = stack.pop().as_float()?;
-                stack.push(JvmValue::Double(value as f64));
+                let value = stack.pop().as_float();
+                stack.push_wide(StackValue::from_double(JvmDouble(value.0 as f64)));
                 pc += 1;
             }
             bytecode::D2I => {
-                let value = stack.pop().as_double()?;
-                stack.push(JvmValue::Int(value as i32));
+                let value = stack.pop_wide().as_double();
+                stack.push(StackValue::from_int(JvmInt(value.0 as i32)));
                 pc += 1;
             }
             bytecode::D2L => {
-                let value = stack.pop().as_double()?;
-                stack.push(JvmValue::Long(value as i64));
+                let value = stack.pop_wide().as_double();
+                stack.push_wide(StackValue::from_long(JvmLong(value.0 as i64)));
                 pc += 1;
             }
             bytecode::D2F => {
-                let value = stack.pop().as_float()?;
-                stack.push(JvmValue::Float(value as f32));
+                let value = stack.pop_wide().as_double();
+                stack.push(StackValue::from_float(JvmFloat(value.0 as f32)));
                 pc += 1;
             }
             bytecode::I2B => {
-                let value = stack.pop().as_int()? as i8;
-                stack.push(JvmValue::Int(value as i32)); // This does sign-extension
+                let value = stack.pop().as_int().0 as i8;
+                stack.push(StackValue::from_int(JvmInt(value as i32))); // This does sign-extension
                 pc += 1;
             }
             bytecode::I2C => {
-                let value = stack.pop().as_int()? as u8;
-                stack.push(JvmValue::Int(value as i32)); //TODO not sure if this does sign-extension (it shouldn't do)
+                let value = stack.pop().as_int().0 as u8;
+                stack.push(StackValue::from_int(JvmInt(value as i32))); //TODO not sure if this does sign-extension (it shouldn't do)
                 pc += 1;
             }
             bytecode::I2S => {
-                let value = stack.pop().as_int()? as i16;
-                stack.push(JvmValue::Int(value as i32)); // This does sign-extension
+                let value = stack.pop().as_int().0 as i16;
+                stack.push(StackValue::from_int(JvmInt(value as i32))); // This does sign-extension
                 pc += 1;
             }
 
             bytecode::LCMP => {
-                let op2 = stack.pop().as_long()?;
-                let op1 = stack.pop().as_long()?;
+                let op2 = stack.pop_wide().as_long();
+                let op1 = stack.pop_wide().as_long();
                 if op1 > op2 {
-                    stack.push(JvmValue::Int(1));
+                    stack.push(StackValue::from_int(JVM_GREATER));
                 } else if op1 == op2 {
-                    stack.push(JvmValue::Int(-1));
+                    stack.push(StackValue::from_int(JVM_EQUAL));
                 } else {
-                    stack.push(JvmValue::Int(0));
+                    stack.push(StackValue::from_int(JVM_LESS));
                 }
                 pc += 3;
             }
             bytecode::FCMPG => {
-                let op2 = stack.pop().as_float()?;
-                let op1 = stack.pop().as_float()?;
-                if op1.is_nan() || op2.is_nan() {
-                    stack.push(JvmValue::Int(1));
+                let op2 = stack.pop().as_float();
+                let op1 = stack.pop().as_float();
+                if op1.0.is_nan() || op2.0.is_nan() {
+                    stack.push(StackValue::from_int(JVM_GREATER));
                 } else if op1 > op2 {
-                    stack.push(JvmValue::Int(1));
+                    stack.push(StackValue::from_int(JVM_GREATER));
                 } else if op1 == op2 {
-                    stack.push(JvmValue::Int(-1));
+                    stack.push(StackValue::from_int(JVM_EQUAL));
                 } else {
-                    stack.push(JvmValue::Int(0));
+                    stack.push(StackValue::from_int(JVM_LESS));
                 }
                 pc += 3;
             }
             bytecode::FCMPL => {
-                let op2 = stack.pop().as_float()?;
-                let op1 = stack.pop().as_float()?;
-                if op1.is_nan() || op2.is_nan() {
-                    stack.push(JvmValue::Int(-1));
+                let op2 = stack.pop().as_float();
+                let op1 = stack.pop().as_float();
+                if op1.0.is_nan() || op2.0.is_nan() {
+                    stack.push(StackValue::from_int(JVM_LESS));
                 } else if op1 > op2 {
-                    stack.push(JvmValue::Int(1));
+                    stack.push(StackValue::from_int(JVM_GREATER));
                 } else if op1 == op2 {
-                    stack.push(JvmValue::Int(-1));
+                    stack.push(StackValue::from_int(JVM_LESS));
                 } else {
-                    stack.push(JvmValue::Int(0));
+                    stack.push(StackValue::from_int(JVM_EQUAL));
                 }
                 pc += 3;
             }
             bytecode::DCMPG => {
-                let op2 = stack.pop().as_double()?;
-                let op1 = stack.pop().as_double()?;
-                if op1.is_nan() || op2.is_nan() {
-                    stack.push(JvmValue::Int(1));
+                let op2 = stack.pop_wide().as_double();
+                let op1 = stack.pop_wide().as_double();
+                if op1.0.is_nan() || op2.0.is_nan() {
+                    stack.push(StackValue::from_int(JVM_GREATER));
                 } else if op1 > op2 {
-                    stack.push(JvmValue::Int(1));
+                    stack.push(StackValue::from_int(JVM_GREATER));
                 } else if op1 == op2 {
-                    stack.push(JvmValue::Int(-1));
+                    stack.push(StackValue::from_int(JVM_EQUAL));
                 } else {
-                    stack.push(JvmValue::Int(0));
+                    stack.push(StackValue::from_int(JVM_LESS));
                 }
                 pc += 3;
             }
             bytecode::DCMPL => {
-                let op2 = stack.pop().as_double()?;
-                let op1 = stack.pop().as_double()?;
-                if op1.is_nan() || op2.is_nan() {
-                    stack.push(JvmValue::Int(-1));
+                let op2 = stack.pop_wide().as_double();
+                let op1 = stack.pop_wide().as_double();
+                if op1.0.is_nan() || op2.0.is_nan() {
+                    stack.push(StackValue::from_int(JVM_LESS));
                 } else if op1 > op2 {
-                    stack.push(JvmValue::Int(1));
+                    stack.push(StackValue::from_int(JVM_GREATER));
                 } else if op1 == op2 {
-                    stack.push(JvmValue::Int(-1));
+                    stack.push(StackValue::from_int(JVM_EQUAL));
                 } else {
-                    stack.push(JvmValue::Int(0));
+                    stack.push(StackValue::from_int(JVM_LESS));
                 }
                 pc += 3;
             }
 
             bytecode::IFEQ => {
-                let op = stack.pop().as_int()?;
-                if op == 0 {
-                    pc = jump(code[pc + 1], code[pc + 2]);
+                let op = stack.pop().as_int();
+                if op.0 == 0 {
+                    pc = offset(pc, code[pc + 1], code[pc + 2]);
+                } else {
+                    pc += 2;
                 }
             }
             bytecode::IFNE => {
-                let op = stack.pop().as_int()?;
-                if op != 0 {
-                    pc = jump(code[pc + 1], code[pc + 2]);
+                let op = stack.pop().as_int();
+                if op.0 != 0 {
+                    pc = offset(pc, code[pc + 1], code[pc + 2]);
+                } else {
+                    pc += 2;
                 }
             }
             bytecode::IFLT => {
-                let op = stack.pop().as_int()?;
-                if op < 0 {
-                    pc = jump(code[pc + 1], code[pc + 2]);
+                let op = stack.pop().as_int();
+                if op.0 < 0 {
+                    pc = offset(pc, code[pc + 1], code[pc + 2]);
+                } else {
+                    pc += 2;
                 }
             }
             bytecode::IFGE => {
-                let op = stack.pop().as_int()?;
-                if op >= 0 {
-                    pc = jump(code[pc + 1], code[pc + 2]);
+                let op = stack.pop().as_int();
+                if op.0 >= 0 {
+                    pc = offset(pc, code[pc + 1], code[pc + 2]);
+                } else {
+                    pc += 2;
                 }
             }
             bytecode::IFGT => {
-                let op = stack.pop().as_int()?;
-                if op > 0 {
-                    pc = jump(code[pc + 1], code[pc + 2]);
+                let op = stack.pop().as_int();
+                if op.0 > 0 {
+                    pc = offset(pc, code[pc + 1], code[pc + 2]);
+                } else {
+                    pc += 2;
                 }
             }
             bytecode::IFLE => {
-                let op = stack.pop().as_int()?;
-                if op <= 0 {
-                    pc = jump(code[pc + 1], code[pc + 2]);
+                let op = stack.pop().as_int();
+                if op.0 <= 0 {
+                    pc = offset(pc, code[pc + 1], code[pc + 2]);
+                } else {
+                    pc += 2;
                 }
             }
             bytecode::IF_ICMPEQ => {
-                let op2 = stack.pop().as_int()?;
-                let op1 = stack.pop().as_int()?;
+                let op2 = stack.pop().as_int();
+                let op1 = stack.pop().as_int();
                 if op1 == op2 {
-                    pc = jump(code[pc + 1], code[pc + 2]);
+                    pc = offset(pc, code[pc + 1], code[pc + 2]);
+                } else {
+                    pc += 3;
                 }
             }
             bytecode::IF_ICMPNE => {
-                let op2 = stack.pop().as_int()?;
-                let op1 = stack.pop().as_int()?;
+                let op2 = stack.pop().as_int();
+                let op1 = stack.pop().as_int();
                 if op1 != op2 {
-                    pc = jump(code[pc + 1], code[pc + 2]);
+                    pc = offset(pc, code[pc + 1], code[pc + 2]);
+                } else {
+                    pc += 3;
                 }
             }
             bytecode::IF_ICMPLT => {
-                let op2 = stack.pop().as_int()?;
-                let op1 = stack.pop().as_int()?;
+                let op2 = stack.pop().as_int();
+                let op1 = stack.pop().as_int();
                 if op1 < op2 {
-                    pc = jump(code[pc + 1], code[pc + 2]);
+                    pc = offset(pc, code[pc + 1], code[pc + 2]);
+                } else {
+                    pc += 3;
                 }
             }
             bytecode::IF_ICMPGE => {
-                let op2 = stack.pop().as_int()?;
-                let op1 = stack.pop().as_int()?;
+                let op2 = stack.pop().as_int();
+                let op1 = stack.pop().as_int();
                 if op1 >= op2 {
-                    pc = jump(code[pc + 1], code[pc + 2]);
+                    pc = offset(pc, code[pc + 1], code[pc + 2]);
+                } else {
+                    pc += 3;
                 }
             }
             bytecode::IF_ICMPGT => {
-                let op2 = stack.pop().as_int()?;
-                let op1 = stack.pop().as_int()?;
+                let op2 = stack.pop().as_int();
+                let op1 = stack.pop().as_int();
                 if op1 > op2 {
-                    pc = jump(code[pc + 1], code[pc + 2]);
+                    pc = offset(pc, code[pc + 1], code[pc + 2]);
+                } else {
+                    pc += 3;
                 }
             }
             bytecode::IF_ICMPLE => {
-                let op2 = stack.pop().as_int()?;
-                let op1 = stack.pop().as_int()?;
+                let op2 = stack.pop().as_int();
+                let op1 = stack.pop().as_int();
                 if op1 <= op2 {
-                    pc = jump(code[pc + 1], code[pc + 2]);
+                    pc = offset(pc, code[pc + 1], code[pc + 2]);
+                } else {
+                    pc += 3;
                 }
             }
 
             // + IF_ACMPEQ, IF_ACMPNE
             bytecode::GOTO => {
-                pc = jump(code[pc + 1], code[pc + 2]);
+                pc = offset(pc, code[pc + 1], code[pc + 2]);
             }
 
             // + JSR, RET (maybe)
 
             // + tableswitch, lookupswitch
-            bytecode::IRETURN
-            | bytecode::LRETURN
-            | bytecode::FRETURN
-            | bytecode::DRETURN
-            | bytecode::ARETURN => break Ok(stack.pop()),
+            bytecode::IRETURN => break Ok(JvmValue::Int(stack.pop().as_int())),
+            bytecode::LRETURN => break Ok(JvmValue::Long(stack.pop_wide().as_long())),
+            bytecode::FRETURN => break Ok(JvmValue::Float(stack.pop().as_float())),
+            bytecode::DRETURN => break Ok(JvmValue::Double(stack.pop_wide().as_double())),
+            bytecode::ARETURN => break Ok(JvmValue::Reference(stack.pop().as_reference())),
             bytecode::RETURN => break Ok(JvmValue::Void),
 
             bytecode::GETSTATIC => {
-                let field_name = callee_class.resolve_field(index(code[pc + 1], code[pc + 2]))?;
+                let (field_name, field_type) =
+                    callee_class.resolve_field(index(code[pc + 1], code[pc + 2]))?;
                 let field = callee_class.get_static_field(field_name)?;
-                stack.push(field);
+                stack.push_value(field);
                 pc += 3;
             }
             bytecode::PUTSTATIC => {
-                let field_name = callee_class.resolve_field(index(code[pc + 1], code[pc + 2]))?;
-                callee_class.set_static_field(field_name, stack.pop())?;
+                let (field_name, field_type) =
+                    callee_class.resolve_field(index(code[pc + 1], code[pc + 2]))?;
+                callee_class.set_static_field(field_name, stack.pop_type(field_type))?;
                 pc += 3;
             }
             bytecode::GETFIELD => {
-                let field_name = callee_class.resolve_field(index(code[pc + 1], code[pc + 2]))?;
+                let (field_name, field_type) =
+                    callee_class.resolve_field(index(code[pc + 1], code[pc + 2]))?;
                 let field = heap
                     .resolve(this.expect("Getting an instance field but this is not bound"))
                     .get_field(field_name, classes)?;
-                stack.push(field);
+                stack.push_value(field);
                 pc += 3;
             }
             bytecode::PUTFIELD => {
-                let field_name = callee_class.resolve_field(index(code[pc + 1], code[pc + 2]))?;
+                let (field_name, field_type) =
+                    callee_class.resolve_field(index(code[pc + 1], code[pc + 2]))?;
                 heap.resolve_mut(this.expect("Getting an instance field but this is not bound"))
-                    .set_field(field_name, classes, stack.pop())?;
+                    .set_field(field_name, classes, stack.pop_type(field_type))?;
                 pc += 3;
             }
 
@@ -738,67 +756,70 @@ pub fn execute_method(
                 let method_index = index(code[pc + 1], code[pc + 2]);
                 //TODO match the signature
                 let (class, name, ty) = callee_class.resolve_method(method_index)?;
-                let class = classes.resolve_by_name(class);
+                let class = classes.resolve_by_name(class, heap);
                 let parameters = stack.pop_parameters(class.get_method(name)?.parameters.len());
                 let return_value = class.call_method(
                     name,
                     parameters,
-                    stack.pop().as_reference()?,
+                    stack.pop().as_reference().to_heap_index(),
                     classes,
                     heap,
                 )?;
-                if return_value != JvmValue::Void {
-                    stack.push(return_value);
-                }
+                stack.push_value(return_value);
                 pc += 3;
             }
             bytecode::INVOKESTATIC => {
                 let method_index = index(code[pc + 1], code[pc + 2]);
                 let (class, name, ty) = callee_class.resolve_method(method_index)?;
-                let class = classes.resolve_by_name(class);
+                let class = classes.resolve_by_name(class, heap);
                 let parameters =
                     stack.pop_parameters(class.get_static_method(name)?.parameters.len());
                 let return_value = class.call_static_method(name, parameters, classes, heap)?;
-                if return_value != JvmValue::Void {
-                    stack.push(return_value);
-                }
+                stack.push_value(return_value);
                 pc += 3;
             }
             bytecode::INVOKEVIRTUAL => {
                 let method_index = index(code[pc + 1], code[pc + 2]);
                 //TODO match the signature, dynamic lookup
                 let (class, name, ty) = callee_class.resolve_method(method_index)?;
-                let class = classes.resolve_by_name(class);
+                let class = classes.resolve_by_name(class, heap);
                 let parameters = stack.pop_parameters(class.get_method(name)?.parameters.len());
                 let return_value = class.call_method(
                     name,
                     parameters,
-                    stack.pop().as_reference()?,
+                    stack.pop().as_reference().to_heap_index(),
                     classes,
                     heap,
                 )?;
-                if return_value != JvmValue::Void {
-                    stack.push(return_value);
-                }
+                stack.push_value(return_value);
                 pc += 3;
             }
             // + invokeinterface, invokedynamic
             bytecode::NEW => {
                 let class_name = callee_class.resolve_type(index(code[pc + 1], code[pc + 2]))?;
-                let instance = heap.instantiate(classes.resolve_by_name(class_name));
-                stack.push(JvmValue::Reference(instance));
+                let instance = heap.instantiate(classes.resolve_by_name(class_name, heap));
+                stack.push(StackValue::from_reference(JvmReference::from_heap_index(
+                    instance,
+                )));
                 pc += 3;
             }
 
             _ => todo!("Unimplemented opcode {:#04x}", opcode),
         }
-    }
+    };
+    //println!("========= Returned from method {0}", &method.name);
+    return_value
 }
 
-fn jump(byte1: u8, byte2: u8) -> usize {
-    u16::from_le_bytes([byte1, byte2]) as usize
+#[inline]
+fn offset(pc: usize, byte1: u8, byte2: u8) -> usize {
+    //hack
+    // Should work because of the two complement's representation of i16 and the wrapping add
+    // as long as no overflows occur (we trust the class file)
+    pc.wrapping_add(i16::from_be_bytes([byte1, byte2]) as usize)
 }
 
+#[inline]
 fn index(byte1: u8, byte2: u8) -> ConstantPoolIndex {
     u16::from_be_bytes([byte1, byte2]).into()
 }

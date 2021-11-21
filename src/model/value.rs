@@ -2,84 +2,121 @@ use std::fmt::Display;
 
 use super::{class::LoadedClasses, heap::{Heap, HeapIndex}, types::{JvmType, TypeError, TypeReference}};
 
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
+#[repr(transparent)]
+pub struct JvmInt(pub i32);
+
+pub const JVM_GREATER: JvmInt = JvmInt(1);
+pub const JVM_EQUAL: JvmInt = JvmInt(0);
+pub const JVM_LESS: JvmInt = JvmInt(-1);
+
+impl From<i32> for JvmInt {
+    fn from(value: i32) -> Self {
+        Self(value)
+    }
+}
+
+impl From<i8> for JvmInt {
+    fn from(value: i8) -> Self {
+        Self(value as i32)
+    }
+}
+
+impl From<i16> for JvmInt {
+    fn from(value: i16) -> Self {
+        Self(value as i32)
+    }
+}
+
+impl From<JvmInt> for i32 {
+    fn from(value: JvmInt) -> Self {
+        value.0
+    }
+}
+
+#[derive(Debug, PartialEq, PartialOrd, Clone, Copy)]
+#[repr(transparent)]
+pub struct JvmFloat(pub f32);
+
+impl From<f32> for JvmFloat {
+    fn from(value: f32) -> Self {
+        Self(value)
+    }
+}
+
+impl From<JvmFloat> for f32 {
+    fn from(value: JvmFloat) -> Self {
+        value.0
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
+#[repr(transparent)]
+pub struct JvmLong(pub i64);
+
+impl From<i64> for JvmLong {
+    fn from(value: i64) -> Self {
+        Self(value)
+    }
+}
+
+impl From<JvmLong> for i64 {
+    fn from(value: JvmLong) -> Self {
+        value.0
+    }
+}
+
+#[derive(Debug, PartialEq, PartialOrd, Clone, Copy)]
+#[repr(transparent)]
+pub struct JvmDouble(pub f64);
+
+impl From<f64> for JvmDouble {
+    fn from(value: f64) -> Self {
+        Self(value)
+    }
+}
+
+impl From<JvmDouble> for f64 {
+    fn from(value: JvmDouble) -> Self {
+        value.0
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[repr(transparent)]
+pub struct JvmReference(pub u16);
+
+impl JvmReference {
+    pub fn to_heap_index(self) -> HeapIndex {
+        HeapIndex::from_u16(self.0)
+    }
+
+    pub fn from_heap_index(index: HeapIndex) -> Self {
+        Self(index.as_u16())
+    }
+}
+
+impl From<u16> for JvmReference {
+    fn from(value: u16) -> Self {
+        Self(value)
+    }
+}
+
+impl From<JvmReference> for u16 {
+    fn from(value: JvmReference) -> Self {
+        value.0
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum JvmValue {
     Void,
-    Int(i32),
-    Long(i64),
-    Float(f32),
-    Double(f64),
-    Reference(HeapIndex)
-}
-
-impl JvmValue {
-    pub fn get_type(self, heap: &Heap) -> JvmType {
-        match self {
-            JvmValue::Void => JvmType::Void,
-            JvmValue::Int(_) => JvmType::Integer,
-            JvmValue::Long(_) => JvmType::Long,
-            JvmValue::Float(_) => JvmType::Float,
-            JvmValue::Double(_) => JvmType::Double,
-            JvmValue::Reference(index) => {
-                JvmType::Reference(TypeReference::Resolved(heap.resolve(index).class()))
-            },
-        }
-    }
-
-    pub fn assert_type(self, ty: JvmType, heap: &Heap, classes: &LoadedClasses) -> Result<(), TypeError> {
-        let own_type = self.get_type(heap);
-        if own_type.matches(&ty, classes) {
-            Ok(())
-        } else {
-            Err(TypeError::WrongType(ty.to_string(), self.get_type_simple_string()))
-        }
-    }
-
-    pub fn as_int(self) -> Result<i32, TypeError> {
-        match self {
-            JvmValue::Int(value) => Ok(value),
-            _ => Err(TypeError::WrongType("Integer".to_string(), self.get_type_simple_string()))
-        }
-    }
-
-    pub fn as_long(self) -> Result<i64, TypeError> {
-        match self {
-            JvmValue::Long(value) => Ok(value),
-            _ => Err(TypeError::WrongType("Long".to_string(), self.get_type_simple_string()))
-        }
-    }
-
-    pub fn as_float(self) -> Result<f32, TypeError> {
-        match self {
-            JvmValue::Float(value) => Ok(value),
-            _ => Err(TypeError::WrongType("Float".to_string(), self.get_type_simple_string()))
-        }
-    }
-
-    pub fn as_double(self) -> Result<f64, TypeError> {
-        match self {
-            JvmValue::Double(value) => Ok(value),
-            _ => Err(TypeError::WrongType("Double".to_string(), self.get_type_simple_string()))
-        }
-    }
-
-    pub fn as_reference(self) -> Result<HeapIndex, TypeError> {
-        match self {
-            JvmValue::Reference(reference) => Ok(reference),
-            _ => Err(TypeError::WrongType("Reference".to_string(), self.get_type_simple_string()))
-        }
-    }
-
-    fn get_type_simple_string(self) -> String {
-        match self {
-            JvmValue::Void => "Void".to_string(),
-            JvmValue::Int(_) => "Integer".to_string(),
-            JvmValue::Long(_) => "Long".to_string(),
-            JvmValue::Float(_) => "Float".to_string(),
-            JvmValue::Double(_) => "Double".to_string(),
-            JvmValue::Reference(_) => "Reference".to_string(),
-        }
-    }
+    Int(JvmInt),
+    Long(JvmLong),
+    Float(JvmFloat),
+    Double(JvmDouble),
+    Reference(JvmReference)
 }
 
 impl Default for JvmValue {

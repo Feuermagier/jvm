@@ -29,3 +29,13 @@ impl Heap {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(transparent)]
 pub struct HeapIndex(usize);
+
+impl HeapIndex {
+    pub fn as_u16(self) -> u16 {
+        self.0 as u16
+    }
+
+    pub fn from_u16(value: u16) -> Self {
+        Self(value as usize)
+    }
+}

@@ -1,4 +1,5 @@
 pub mod bytecode;
+pub mod class_loader;
 pub mod class_parser;
 pub mod interpreter;
 pub mod model;
@@ -13,36 +14,31 @@ use std::{
 use dynasmrt::{dynasm, DynasmApi, DynasmLabelApi};
 use model::method::Parameters;
 
-use crate::model::{class::LoadedClasses, heap::Heap};
+use crate::{
+    class_loader::BootstrapClassLoader,
+    model::{
+        class::{self, LoadedClasses},
+        heap::Heap,
+    },
+};
 
 fn main() {
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
         .init();
 
-    let mut classes = LoadedClasses::new();
+    let class_loader = BootstrapClassLoader::new();
+    let mut classes = LoadedClasses::new(class_loader);
     let mut heap = Heap::new();
 
     log::info!("Loading class Object");
-    let mut object_file = File::open("classes/Object.class").unwrap();
-    let mut bytes = Vec::new();
-    object_file.read_to_end(&mut bytes).unwrap();
-    let (_, object) = class_parser::parse(&bytes, &mut classes).unwrap();
+    classes.resolve_by_name("classes/Object", &mut heap);
 
-    log::info!("Loading class Test");
-    let mut file = File::open("Test.class").unwrap();
-    let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes).unwrap();
-    let (_, class) = class_parser::parse(&bytes, &mut classes).unwrap();
+    let class = classes.resolve_by_name("Test", &mut heap).index();
 
     classes
         .resolve(class)
-        .bootstrap(&classes, &mut heap)
-        .unwrap();
-
-    classes
-        .resolve(class)
-        .call_static_method("main", Parameters::empty(), &classes, &mut heap)
+        .call_static_method("main", Parameters::empty(), &mut classes, &mut heap)
         .unwrap();
 
     dbg!(&classes.resolve(class).get_static_field("y"));
