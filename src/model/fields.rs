@@ -1,4 +1,4 @@
-use super::value::{JvmDouble, JvmFloat, JvmInt, JvmLong, JvmReference, JvmValue};
+use super::{types::JvmType, value::{JvmDouble, JvmFloat, JvmInt, JvmLong, JvmReference, JvmValue}};
 
 #[repr(transparent)]
 pub struct Fields {
@@ -108,5 +108,20 @@ impl Fields {
             self.fields[offset + 0],
             self.fields[offset + 1],
         ]))
+    }
+
+    pub fn get_value(&self, offset: usize, ty: &JvmType) -> JvmValue {
+        match ty {
+            JvmType::Void => JvmValue::Void,
+            JvmType::Byte => todo!(),
+            JvmType::Char => todo!(),
+            JvmType::Integer => JvmValue::Int(self.get_int(offset)),
+            JvmType::Long => JvmValue::Long(self.get_long(offset)),
+            JvmType::Float => JvmValue::Float(self.get_float(offset)),
+            JvmType::Double => JvmValue::Double(self.get_double(offset)),
+            JvmType::Reference(_) => JvmValue::Reference(self.get_reference(offset)),
+            JvmType::Short => todo!(),
+            JvmType::Boolean => todo!(),
+        }
     }
 }

@@ -16,10 +16,7 @@ use model::method::Parameters;
 
 use crate::{
     class_loader::BootstrapClassLoader,
-    model::{
-        class::{self, LoadedClasses},
-        heap::Heap,
-    },
+    model::{class_library::ClassLibrary, heap::Heap},
 };
 
 fn main() {
@@ -28,7 +25,7 @@ fn main() {
         .init();
 
     let class_loader = BootstrapClassLoader::new();
-    let mut classes = LoadedClasses::new(class_loader);
+    let classes = ClassLibrary::new(class_loader);
     let mut heap = Heap::new();
 
     log::info!("Loading class Object");
@@ -38,7 +35,7 @@ fn main() {
 
     classes
         .resolve(class)
-        .call_static_method("main", Parameters::empty(), &mut classes, &mut heap)
+        .call_static_method("main", Parameters::empty(), &classes, &mut heap)
         .unwrap();
 
     dbg!(&classes.resolve(class).get_static_field("y"));

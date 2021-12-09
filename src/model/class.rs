@@ -2,9 +2,13 @@ use std::{cell::RefCell, collections::HashMap};
 
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::{class_loader::BootstrapClassLoader, class_parser::{self, ParsingError}, interpreter::{self, ExecutionError}, model::constant_pool::{ConstantPoolEntry, ConstantPoolError}};
+use crate::{
+    interpreter::{self, ExecutionError},
+    model::constant_pool::{ConstantPoolEntry, ConstantPoolError},
+};
 
 use super::{
+    class_library::{ClassIndex, ClassLibrary, ClassNotLoadedIndex},
     constant_pool::{ConstantPool, ConstantPoolIndex},
     field::FieldDescriptor,
     fields::Fields,
@@ -14,61 +18,6 @@ use super::{
     value::JvmValue,
     visibility::Visibility,
 };
-
-pub struct LoadedClasses {
-    classes: Vec<Class>,
-    name_mappings: HashMap<String, usize>,
-    class_loader: BootstrapClassLoader
-}
-
-impl LoadedClasses {
-    pub fn new(class_loader: BootstrapClassLoader) -> Self {
-        Self {
-            classes: Vec::new(),
-            name_mappings: HashMap::new(),
-            class_loader
-        }
-    }
-
-    pub fn resolve_by_name(&mut self, name: &str, heap: &mut Heap) -> &Class {
-        if let Some(index) = self.name_mappings.get(name) {
-            &self.classes[*index]
-        } else {
-            let index = self.load(name, heap).unwrap();
-            self.resolve(index)
-        }
-    }
-
-    pub fn resolve(&self, index: ClassIndex) -> &Class {
-        &self.classes[index.0]
-    }
-
-    /// This function should only be called by a class parser
-    pub fn load(
-        &mut self,
-        name: &str,
-        heap: &mut Heap
-    ) -> Result<ClassIndex, ClassResolveError> {
-        let index = self.classes.len();
-
-        let bytes = self.class_loader.load_class(name.to_string());
-        let (_class_file, mut class) = class_parser::parse(&bytes)?;
-        class.index = ClassIndex(index);
-
-        self.name_mappings.insert(class.name()?.to_string(), index);
-        self.classes.push(class);
-
-        self.classes[index].bootstrap(self, heap)?;
-
-        Ok(ClassIndex(index))
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(transparent)]
-pub struct ClassIndex(usize);
-
-pub const ClassNotLoadedIndex: ClassIndex = ClassIndex(0);
 
 pub struct Class {
     index: ClassIndex,
@@ -139,13 +88,15 @@ impl Class {
         }
     }
 
-    pub fn bootstrap(
-        &self,
-        classes: &mut LoadedClasses,
-        heap: &mut Heap,
-    ) -> Result<(), ExecutionError> {
-        let return_value =
-            self.call_static_method("<clinit>", Parameters::empty(), classes, heap)?;
+    pub fn update_class_index(&mut self, index: ClassIndex) {
+        self.index = index;
+    }
+
+    pub fn bootstrap(&self, classes: &ClassLibrary, heap: &mut Heap) -> Result<(), ExecutionError> {
+        if self.static_methods.contains_key("<clinit>") {
+            let _return_value =
+                self.call_static_method("<clinit>", Parameters::empty(), classes, heap)?;
+        }
         Ok(())
     }
 
@@ -251,7 +202,7 @@ impl Class {
         &self,
         name: &str,
         parameters: Parameters,
-        classes: &mut LoadedClasses,
+        classes: &ClassLibrary,
         heap: &mut Heap,
     ) -> Result<JvmValue, ExecutionError> {
         // Resolve the method in super classes
@@ -270,7 +221,7 @@ impl Class {
         name: &str,
         parameters: Parameters,
         this: HeapIndex,
-        classes: &mut LoadedClasses,
+        classes: &ClassLibrary,
         heap: &mut Heap,
     ) -> Result<JvmValue, ExecutionError> {
         // Resolve the method in super classes
@@ -318,28 +269,37 @@ impl Class {
     }
 }
 
+/*
+pub struct Statics {
+    static_fields: Vec<Fields>,
+}
+
+impl Statics {
+    pub fn new() -> Self {
+        Self {
+            static_fields: Vec::new(),
+        }
+    }
+
+    fn get(&self, class: ClassIndex, offset: usize, ty: &JvmType) -> JvmValue {
+        self.static_fields[class.0].get_value(offset, ty)
+    }
+
+    fn put(&mut self, class: ClassIndex, offset: usize, value: JvmValue) {
+        self.static_fields[class.0].set_value(offset, value);
+    }
+}
+*/
+
 pub struct Instance {
     class: ClassIndex,
     fields: Fields,
 }
 
 impl Instance {
-    pub fn get_field(&self, name: &str, classes: &mut LoadedClasses) -> Result<JvmValue, FieldError> {
+    pub fn get_field(&self, name: &str, classes: &ClassLibrary) -> Result<JvmValue, FieldError> {
         if let Some((offset, ty)) = classes.resolve(self.class).field_offsets.get(name) {
-            match ty {
-                JvmType::Void => Ok(JvmValue::Void),
-                JvmType::Byte => todo!(),
-                JvmType::Char => todo!(),
-                JvmType::Integer => Ok(JvmValue::Int(self.fields.get_int(*offset))),
-                JvmType::Long => Ok(JvmValue::Long(self.fields.get_long(*offset))),
-                JvmType::Float => Ok(JvmValue::Float(self.fields.get_float(*offset))),
-                JvmType::Double => Ok(JvmValue::Double(self.fields.get_double(*offset))),
-                JvmType::Reference(_) => {
-                    Ok(JvmValue::Reference(self.fields.get_reference(*offset)))
-                }
-                JvmType::Short => todo!(),
-                JvmType::Boolean => todo!(),
-            }
+            Ok(self.fields.get_value(*offset, ty))
         } else {
             Err(FieldError::UnknownStaticField(name.to_string()))
         }
@@ -348,7 +308,7 @@ impl Instance {
     pub fn set_field(
         &mut self,
         name: &str,
-        classes: &LoadedClasses,
+        classes: &ClassLibrary,
         value: JvmValue,
     ) -> Result<(), FieldError> {
         if let Some((offset, ty)) = classes.resolve(self.class).field_offsets.get(name) {
@@ -390,18 +350,6 @@ fn init_fields(
         }
     }
     fields
-}
-
-#[derive(thiserror::Error, Debug)]
-pub enum ClassResolveError {
-    #[error(transparent)]
-    ConstantPool(#[from] ConstantPoolError),
-
-    #[error(transparent)]
-    ClassParsing(#[from] ParsingError),
-
-    #[error(transparent)]
-    ClassInitialization(#[from] ExecutionError)
 }
 
 #[derive(thiserror::Error, Debug)]

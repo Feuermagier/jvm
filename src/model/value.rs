@@ -1,7 +1,6 @@
 use std::fmt::Display;
 
-use super::{class::LoadedClasses, heap::{Heap, HeapIndex}, types::{JvmType, TypeError, TypeReference}};
-
+use super::heap::HeapIndex;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
 #[repr(transparent)]
@@ -116,7 +115,7 @@ pub enum JvmValue {
     Long(JvmLong),
     Float(JvmFloat),
     Double(JvmDouble),
-    Reference(JvmReference)
+    Reference(JvmReference),
 }
 
 impl Default for JvmValue {

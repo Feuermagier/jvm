@@ -5,7 +5,7 @@ use std::{iter::Peekable, str::Utf8Error};
 
 use unicode_segmentation::{Graphemes, UnicodeSegmentation};
 
-use crate::{class_parser::iterator::ClassFileIterator, model::{class::{Class, ClassIndex, LoadedClasses}, class_file::ClassFile, constant_pool::{ConstantPool, ConstantPoolEntry, ConstantPoolError, ConstantPoolIndex}, field::FieldDescriptor, method::{Method, MethodCode}, types::{JvmType, TypeReference}, value::JvmValue, visibility::Visibility}};
+use crate::{class_parser::iterator::ClassFileIterator, model::{class::Class, class_file::ClassFile, constant_pool::{ConstantPool, ConstantPoolEntry, ConstantPoolError, ConstantPoolIndex}, field::FieldDescriptor, method::{Method, MethodCode}, types::{JvmType, TypeReference}, value::JvmValue, visibility::Visibility}};
 
 pub fn parse(
     bytes: &[u8],

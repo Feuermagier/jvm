@@ -2,7 +2,7 @@ use std::{fmt::Display, iter::Peekable};
 
 use unicode_segmentation::Graphemes;
 
-use super::class::{ClassIndex, LoadedClasses};
+use super::class_library::{ClassIndex, ClassLibrary};
 
 #[derive(Clone, Debug)]
 pub enum JvmType {
@@ -20,7 +20,7 @@ pub enum JvmType {
 }
 
 impl JvmType {
-    pub fn matches(self, other: &Self, classes: &LoadedClasses) -> bool {
+    pub fn matches(self, other: &Self, classes: &ClassLibrary) -> bool {
         match (self, other) {
             (JvmType::Void, JvmType::Void) => true,
             (JvmType::Byte, JvmType::Byte) => true,
@@ -106,7 +106,7 @@ pub enum TypeReference {
 }
 
 impl TypeReference {
-    pub fn matches(&self, other: &Self, classes: &LoadedClasses) -> bool {
+    pub fn matches(&self, other: &Self, classes: &ClassLibrary) -> bool {
         match (self, other) {
             (Self::Resolved(a), Self::Resolved(b)) => a == b,
             (Self::Unresolved(a), Self::Unresolved(b)) => a == b,

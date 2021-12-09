@@ -1,20 +1,9 @@
 pub mod locals;
 pub mod stack;
-use crate::{
-    bytecode,
-    interpreter::stack::{StackValue, StackValueWide},
-    model::{
-        class::{Class, FieldError, LoadedClasses, MethodError},
-        constant_pool::{ConstantPoolError, ConstantPoolIndex},
-        heap::{Heap, HeapIndex},
-        method::{Method, MethodCode, Parameters},
-        types::TypeError,
-        value::{
+use crate::{bytecode, interpreter::stack::{StackValue, StackValueWide}, model::{class::{Class, FieldError, MethodError}, class_library::ClassLibrary, constant_pool::{ConstantPoolError, ConstantPoolIndex}, heap::{Heap, HeapIndex}, method::{Method, MethodCode, Parameters}, types::TypeError, value::{
             JvmDouble, JvmFloat, JvmInt, JvmLong, JvmReference, JvmValue, JVM_EQUAL, JVM_GREATER,
             JVM_LESS,
-        },
-    },
-};
+        }}};
 
 use self::{locals::InterpreterLocals, stack::InterpreterStack};
 
@@ -23,7 +12,7 @@ pub fn execute_method(
     parameters: Parameters,
     callee_class: &Class,
     this: Option<HeapIndex>,
-    classes: &mut LoadedClasses,
+    classes: &ClassLibrary,
     heap: &mut Heap,
 ) -> Result<JvmValue, ExecutionError> {
     //println!("========= Entered method {0}", &method.name);
@@ -797,7 +786,8 @@ pub fn execute_method(
             // + invokeinterface, invokedynamic
             bytecode::NEW => {
                 let class_name = callee_class.resolve_type(index(code[pc + 1], code[pc + 2]))?;
-                let instance = heap.instantiate(classes.resolve_by_name(class_name, heap));
+                let class = classes.resolve_by_name(class_name, heap);
+                let instance = heap.instantiate(class);
                 stack.push(StackValue::from_reference(JvmReference::from_heap_index(
                     instance,
                 )));
