@@ -110,7 +110,7 @@ impl Fields {
         ]))
     }
 
-    pub fn get_value(&self, offset: usize, ty: &JvmType) -> JvmValue {
+    pub fn get_value(&self, offset: usize, ty: JvmType) -> JvmValue {
         match ty {
             JvmType::Void => JvmValue::Void,
             JvmType::Byte => todo!(),
@@ -119,7 +119,7 @@ impl Fields {
             JvmType::Long => JvmValue::Long(self.get_long(offset)),
             JvmType::Float => JvmValue::Float(self.get_float(offset)),
             JvmType::Double => JvmValue::Double(self.get_double(offset)),
-            JvmType::Reference(_) => JvmValue::Reference(self.get_reference(offset)),
+            JvmType::Reference => JvmValue::Reference(self.get_reference(offset)),
             JvmType::Short => todo!(),
             JvmType::Boolean => todo!(),
         }

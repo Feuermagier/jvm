@@ -4,7 +4,7 @@ use unicode_segmentation::Graphemes;
 
 use super::class_library::{ClassIndex, ClassLibrary};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum JvmType {
     Void,
     Byte,
@@ -13,7 +13,7 @@ pub enum JvmType {
     Long,
     Float,
     Double,
-    Reference(TypeReference),
+    Reference,
     Short,
     Boolean,
     // + arrays
@@ -29,7 +29,8 @@ impl JvmType {
             (JvmType::Long, JvmType::Long) => true,
             (JvmType::Float, JvmType::Float) => true,
             (JvmType::Double, JvmType::Double) => true,
-            (JvmType::Reference(a), JvmType::Reference(b)) => a.matches(b, classes),
+            //(JvmType::Reference(a), JvmType::Reference(b)) => a.matches(b, classes),
+            (JvmType::Reference, JvmType::Reference) => true,
             (JvmType::Short, JvmType::Short) => true,
             (JvmType::Boolean, JvmType::Boolean) => true,
             _ => false,
@@ -45,7 +46,7 @@ impl JvmType {
             (JvmType::Long, JvmType::Long) => true,
             (JvmType::Float, JvmType::Float) => true,
             (JvmType::Double, JvmType::Double) => true,
-            (JvmType::Reference(_), JvmType::Reference(_)) => true,
+            (JvmType::Reference, JvmType::Reference) => true,
             (JvmType::Short, JvmType::Short) => true,
             (JvmType::Boolean, JvmType::Boolean) => true,
             _ => false,
@@ -61,7 +62,7 @@ impl JvmType {
             JvmType::Long => 8,
             JvmType::Float => 4,
             JvmType::Double => 8,
-            JvmType::Reference(_) => 2, // TODO
+            JvmType::Reference => 2, // TODO
             JvmType::Short => 2,
             JvmType::Boolean => 1,
         }
@@ -84,8 +85,11 @@ impl JvmType {
             "Z" => Some(JvmType::Boolean),
             "V" => Some(JvmType::Void),
             "L" => {
-                let class = graphemes.take_while(|c| *c != ";").collect::<String>();
-                Some(JvmType::Reference(TypeReference::Unresolved(class)))
+                // We have to read the class even though we don't use it currently so that
+                // the iterator gets advanced
+                let _ = graphemes.take_while(|c| *c != ";").collect::<String>();
+                //Some(JvmType::Reference(TypeReference::Unresolved(class)))
+                Some(JvmType::Reference)
             }
             "[" => unimplemented!("Arrays are not implemented"),
             _ => None,

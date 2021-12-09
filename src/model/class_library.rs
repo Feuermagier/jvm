@@ -42,7 +42,7 @@ impl ClassLibrary {
     /// This function should only be called by a class parser
     pub fn load(&self, name: &str, heap: &mut Heap) -> Result<ClassIndex, ClassResolveError> {
         let index = self.classes.len();
-
+        log::info!("Loading class {}", name);
         let bytes = self.class_loader.load_class(name.to_string());
         let (_class_file, mut class) = class_parser::parse(&bytes)?;
         class.update_class_index(ClassIndex(index));

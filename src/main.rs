@@ -28,7 +28,6 @@ fn main() {
     let classes = ClassLibrary::new(class_loader);
     let mut heap = Heap::new();
 
-    log::info!("Loading class Object");
     classes.resolve_by_name("classes/Object", &mut heap);
 
     let class = classes.resolve_by_name("Test", &mut heap).index();
@@ -38,7 +37,7 @@ fn main() {
         .call_static_method("main", Parameters::empty(), &classes, &mut heap)
         .unwrap();
 
-    dbg!(&classes.resolve(class).get_static_field("y"));
+    dbg!(&classes.resolve(class).get_static_field_by_name("y"));
 
     /*
     let mut ops = dynasmrt::x64::Assembler::new().unwrap();

@@ -1,9 +1,21 @@
 pub mod locals;
 pub mod stack;
-use crate::{bytecode, interpreter::stack::{StackValue, StackValueWide}, model::{class::{Class, FieldError, MethodError}, class_library::ClassLibrary, constant_pool::{ConstantPoolError, ConstantPoolIndex}, heap::{Heap, HeapIndex}, method::{Method, MethodCode, Parameters}, types::TypeError, value::{
+use crate::{
+    bytecode,
+    interpreter::stack::{StackValue, StackValueWide},
+    model::{
+        class::{Class, FieldError, MethodError},
+        class_library::ClassLibrary,
+        constant_pool::{ConstantPoolError, ConstantPoolIndex},
+        heap::{Heap, HeapIndex},
+        method::{Method, MethodCode, Parameters},
+        types::{JvmType, TypeError},
+        value::{
             JvmDouble, JvmFloat, JvmInt, JvmLong, JvmReference, JvmValue, JVM_EQUAL, JVM_GREATER,
             JVM_LESS,
-        }}};
+        },
+    },
+};
 
 use self::{locals::InterpreterLocals, stack::InterpreterStack};
 
@@ -15,7 +27,11 @@ pub fn execute_method(
     classes: &ClassLibrary,
     heap: &mut Heap,
 ) -> Result<JvmValue, ExecutionError> {
-    //println!("========= Entered method {0}", &method.name);
+    println!(
+        "========= Entered method {0} of type {1}",
+        &method.name,
+        callee_class.name().unwrap()
+    );
 
     let code = &method.code;
     let code = match code {
@@ -712,32 +728,51 @@ pub fn execute_method(
             bytecode::RETURN => break Ok(JvmValue::Void),
 
             bytecode::GETSTATIC => {
-                let (field_name, field_type) =
-                    callee_class.resolve_field(index(code[pc + 1], code[pc + 2]))?;
-                let field = callee_class.get_static_field(field_name)?;
+                let info = callee_class.resolve_field(
+                    index(code[pc + 1], code[pc + 2]),
+                    true,
+                    classes,
+                    heap,
+                )?;
+                let field = callee_class.get_static_field(&info);
                 stack.push_value(field);
                 pc += 3;
             }
             bytecode::PUTSTATIC => {
-                let (field_name, field_type) =
-                    callee_class.resolve_field(index(code[pc + 1], code[pc + 2]))?;
-                callee_class.set_static_field(field_name, stack.pop_type(field_type))?;
+                // TODO use the type of the class found in the constant pool
+                let info = callee_class.resolve_field(
+                    index(code[pc + 1], code[pc + 2]),
+                    true,
+                    classes,
+                    heap,
+                )?;
+                let ty = info.ty;
+                callee_class.set_static_field(info, stack.pop_type(ty));
                 pc += 3;
             }
             bytecode::GETFIELD => {
-                let (field_name, field_type) =
-                    callee_class.resolve_field(index(code[pc + 1], code[pc + 2]))?;
-                let field = heap
-                    .resolve(this.expect("Getting an instance field but this is not bound"))
-                    .get_field(field_name, classes)?;
+                let info = callee_class.resolve_field(
+                    index(code[pc + 1], code[pc + 2]),
+                    false,
+                    classes,
+                    heap,
+                )?;
+                let objectref = stack.pop().as_reference();
+                let field = heap.resolve(objectref.to_heap_index()).get_field(info);
                 stack.push_value(field);
                 pc += 3;
             }
             bytecode::PUTFIELD => {
-                let (field_name, field_type) =
-                    callee_class.resolve_field(index(code[pc + 1], code[pc + 2]))?;
-                heap.resolve_mut(this.expect("Getting an instance field but this is not bound"))
-                    .set_field(field_name, classes, stack.pop_type(field_type))?;
+                let info = callee_class.resolve_field(
+                    index(code[pc + 1], code[pc + 2]),
+                    false,
+                    classes,
+                    heap,
+                )?;
+                let value = stack.pop_type(info.ty);
+                let objectref = stack.pop().as_reference();
+                heap.resolve_mut(objectref.to_heap_index())
+                    .set_field(info, value);
                 pc += 3;
             }
 
@@ -797,7 +832,11 @@ pub fn execute_method(
             _ => todo!("Unimplemented opcode {:#04x}", opcode),
         }
     };
-    //println!("========= Returned from method {0}", &method.name);
+    println!(
+        "========= Exited method {0} of type {1}",
+        &method.name,
+        callee_class.name().unwrap()
+    );
     return_value
 }
 

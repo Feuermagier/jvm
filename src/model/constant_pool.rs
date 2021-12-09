@@ -1,5 +1,7 @@
 use std::fmt::Display;
 
+use super::class::FieldInfo;
+
 #[derive(Debug)]
 pub struct ConstantPool {
     entries: Vec<ConstantPoolEntry>,
@@ -25,6 +27,33 @@ impl ConstantPool {
             ConstantPoolEntry::Utf8(string) => Ok(string),
             _ => Err(ConstantPoolError::NotAnUtf8String(index, value.clone())),
         }
+    }
+
+    pub fn get_class(
+        &self,
+        index: ConstantPoolIndex,
+    ) -> Result<ConstantPoolIndex, ConstantPoolError> {
+        let value = self.get(index)?;
+        match value {
+            ConstantPoolEntry::Class { name } => Ok(*name),
+            _ => Err(ConstantPoolError::NotAClassReference(index, value.clone())),
+        }
+    }
+
+    pub fn get_name_and_type(
+        &self,
+        index: ConstantPoolIndex,
+    ) -> Result<(ConstantPoolIndex, ConstantPoolIndex), ConstantPoolError> {
+        let value = self.get(index)?;
+        match value {
+            ConstantPoolEntry::NameAndType { name, ty } => Ok((*name, *ty)),
+            _ => Err(ConstantPoolError::NotNameAndType(index, value.clone())),
+        }
+    }
+
+    pub fn update_resolved_field(&mut self, index: ConstantPoolIndex, info: FieldInfo) {
+        self.entries[(index.0 - 1) as usize] =
+            ConstantPoolEntry::FieldReference(FieldReference::Resolved { info });
     }
 }
 
@@ -55,10 +84,7 @@ pub enum ConstantPoolEntry {
     Class {
         name: ConstantPoolIndex,
     },
-    FieldReference {
-        class: ConstantPoolIndex,
-        name_and_type: ConstantPoolIndex,
-    },
+    FieldReference(FieldReference),
     MethodReference {
         class: ConstantPoolIndex,
         name_and_type: ConstantPoolIndex,
@@ -71,13 +97,24 @@ pub enum ConstantPoolEntry {
         name: ConstantPoolIndex,
         ty: ConstantPoolIndex,
     },
-    Empty // To reserve the slot after longs and doubles
+    Empty, // To reserve the slot after longs and doubles
 }
 
 impl Display for ConstantPoolEntry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?}", self)
     }
+}
+
+#[derive(Debug, Clone)]
+pub enum FieldReference {
+    Unresolved {
+        class: ConstantPoolIndex,
+        name_and_type: ConstantPoolIndex,
+    },
+    Resolved {
+        info: FieldInfo,
+    },
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -100,8 +137,12 @@ pub enum ConstantPoolError {
     #[error("the value at index {0} is not resolvable to a method reference")]
     MethodNotResolvable(ConstantPoolIndex),
 
-    #[error(
-        "The constant pool entry at #{0} is expected to be of type utf 8, but is actually {1}"
-    )]
+    #[error("The constant pool entry at #{0} is expected to be of type UTF8, but is actually {1}")]
     NotAnUtf8String(ConstantPoolIndex, ConstantPoolEntry),
+
+    #[error("The constant pool entry at {0} is expected to be of type class, but is actually {1}")]
+    NotAClassReference(ConstantPoolIndex, ConstantPoolEntry),
+
+    #[error("The constant pool entry at {0} is expected to be of type NameAndType, but is actually {1}")]
+    NotNameAndType(ConstantPoolIndex, ConstantPoolEntry),
 }

@@ -6,6 +6,9 @@ public class Test {
         y = 5;
         var test = new Test();
 		test.b(42, new Object());
+        var test2 = new Test2();
+        test2.x = 13;
+        
     }
     
     public static void a(int q) {

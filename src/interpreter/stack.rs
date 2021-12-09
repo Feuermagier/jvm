@@ -106,7 +106,7 @@ impl InterpreterStack {
             JvmType::Long => JvmValue::Long(self.pop_wide().as_long()),
             JvmType::Float => JvmValue::Float(self.pop().as_float()),
             JvmType::Double => JvmValue::Double(self.pop_wide().as_double()),
-            JvmType::Reference(_) => JvmValue::Reference(self.pop().as_reference()),
+            JvmType::Reference => JvmValue::Reference(self.pop().as_reference()),
             JvmType::Short => todo!(),
             JvmType::Boolean => todo!(),
         }

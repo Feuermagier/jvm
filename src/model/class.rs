@@ -9,7 +9,7 @@ use crate::{
 
 use super::{
     class_library::{ClassIndex, ClassLibrary, ClassNotLoadedIndex},
-    constant_pool::{ConstantPool, ConstantPoolIndex},
+    constant_pool::{ConstantPool, ConstantPoolIndex, FieldReference},
     field::FieldDescriptor,
     fields::Fields,
     heap::{Heap, HeapIndex},
@@ -103,22 +103,42 @@ impl Class {
     pub fn resolve_field(
         &self,
         index: ConstantPoolIndex,
-    ) -> Result<(&'_ str, JvmType), ConstantPoolError> {
+        static_field: bool,
+        classes: &ClassLibrary,
+        heap: &mut Heap,
+    ) -> Result<FieldInfo, ConstantPoolError> {
         match self.constant_pool.get(index)? {
             //TODO use the class
-            ConstantPoolEntry::FieldReference { name_and_type, .. } => {
-                match self.constant_pool.get(*name_and_type)? {
-                    ConstantPoolEntry::NameAndType { name, ty } => {
-                        let ty_str = self.constant_pool.get_utf8(*ty)?;
-                        Ok((
-                            self.constant_pool.get_utf8(*name)?,
-                            JvmType::parse(&mut ty_str.graphemes(true).peekable())
-                                .ok_or(ConstantPoolError::InvalidType(*ty))?,
-                        ))
+            ConstantPoolEntry::FieldReference(reference) => match reference {
+                FieldReference::Resolved { info } => Ok(*info),
+                FieldReference::Unresolved {
+                    name_and_type,
+                    class,
+                } => {
+                    let (name, ty) = self.constant_pool.get_name_and_type(*name_and_type)?;
+                    //let ty_str = self.constant_pool.get_utf8(ty)?;
+                    let name = self.constant_pool.get_utf8(name)?;
+
+                    let callee_class_name = self
+                        .constant_pool
+                        .get_utf8(self.constant_pool.get_class(*class)?)?;
+                    let callee_class = classes.resolve_by_name(callee_class_name, heap);
+
+                    let (offset, ty) = if static_field {
+                        &callee_class.static_field_offsets
+                    } else {
+                        &callee_class.field_offsets
                     }
-                    _ => Err(ConstantPoolError::FieldNotResolvable(index)),
+                    .get(name)
+                    .ok_or(ConstantPoolError::FieldNotResolvable(index))?;
+                    let info = FieldInfo {
+                        offset: *offset,
+                        ty: *ty,
+                    };
+
+                    Ok(info)
                 }
-            }
+            },
             _ => Err(ConstantPoolError::FieldNotResolvable(index)),
         }
     }
@@ -150,40 +170,19 @@ impl Class {
         }
     }
 
-    pub fn get_static_field(&self, name: &str) -> Result<JvmValue, FieldError> {
-        if let Some((offset, ty)) = self.static_field_offsets.get(name) {
-            match ty {
-                JvmType::Void => Ok(JvmValue::Void),
-                JvmType::Byte => todo!(),
-                JvmType::Char => todo!(),
-                JvmType::Integer => Ok(JvmValue::Int(self.static_fields.borrow().get_int(*offset))),
-                JvmType::Long => Ok(JvmValue::Long(
-                    self.static_fields.borrow().get_long(*offset),
-                )),
-                JvmType::Float => Ok(JvmValue::Float(
-                    self.static_fields.borrow().get_float(*offset),
-                )),
-                JvmType::Double => Ok(JvmValue::Double(
-                    self.static_fields.borrow().get_double(*offset),
-                )),
-                JvmType::Reference(_) => Ok(JvmValue::Reference(
-                    self.static_fields.borrow().get_reference(*offset),
-                )),
-                JvmType::Short => todo!(),
-                JvmType::Boolean => todo!(),
-            }
-        } else {
-            Err(FieldError::UnknownStaticField(name.to_string()))
-        }
+    pub fn get_static_field(&self, info: &FieldInfo) -> JvmValue {
+        self.static_fields.borrow().get_value(info.offset, info.ty)
     }
 
-    pub fn set_static_field(&self, name: &str, value: JvmValue) -> Result<(), FieldError> {
-        if let Some((offset, ty)) = self.static_field_offsets.get(name) {
-            self.static_fields.borrow_mut().set_value(*offset, value);
-            Ok(())
-        } else {
-            Err(FieldError::UnknownStaticField(name.to_string()))
-        }
+    pub fn get_static_field_by_name(&self, name: &str) -> JvmValue {
+        let (offset, ty) = *self.static_field_offsets.get(name).unwrap();
+        self.get_static_field(&FieldInfo { offset, ty })
+    }
+
+    pub fn set_static_field(&self, info: FieldInfo, value: JvmValue) {
+        self.static_fields
+            .borrow_mut()
+            .set_value(info.offset, value);
     }
 
     pub fn get_static_method(&self, name: &str) -> Result<&'_ Method, MethodError> {
@@ -269,27 +268,11 @@ impl Class {
     }
 }
 
-/*
-pub struct Statics {
-    static_fields: Vec<Fields>,
+#[derive(Debug, Clone, Copy)]
+pub struct FieldInfo {
+    pub offset: usize,
+    pub ty: JvmType,
 }
-
-impl Statics {
-    pub fn new() -> Self {
-        Self {
-            static_fields: Vec::new(),
-        }
-    }
-
-    fn get(&self, class: ClassIndex, offset: usize, ty: &JvmType) -> JvmValue {
-        self.static_fields[class.0].get_value(offset, ty)
-    }
-
-    fn put(&mut self, class: ClassIndex, offset: usize, value: JvmValue) {
-        self.static_fields[class.0].set_value(offset, value);
-    }
-}
-*/
 
 pub struct Instance {
     class: ClassIndex,
@@ -297,26 +280,12 @@ pub struct Instance {
 }
 
 impl Instance {
-    pub fn get_field(&self, name: &str, classes: &ClassLibrary) -> Result<JvmValue, FieldError> {
-        if let Some((offset, ty)) = classes.resolve(self.class).field_offsets.get(name) {
-            Ok(self.fields.get_value(*offset, ty))
-        } else {
-            Err(FieldError::UnknownStaticField(name.to_string()))
-        }
+    pub fn get_field(&self, info: FieldInfo) -> JvmValue {
+        self.fields.get_value(info.offset, info.ty)
     }
 
-    pub fn set_field(
-        &mut self,
-        name: &str,
-        classes: &ClassLibrary,
-        value: JvmValue,
-    ) -> Result<(), FieldError> {
-        if let Some((offset, ty)) = classes.resolve(self.class).field_offsets.get(name) {
-            self.fields.set_value(*offset, value);
-            Ok(())
-        } else {
-            Err(FieldError::UnknownStaticField(name.to_string()))
-        }
+    pub fn set_field(&mut self, info: FieldInfo, value: JvmValue) {
+        self.fields.set_value(info.offset, value);
     }
 
     pub fn class(&self) -> ClassIndex {

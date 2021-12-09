@@ -5,11 +5,21 @@ use std::{iter::Peekable, str::Utf8Error};
 
 use unicode_segmentation::{Graphemes, UnicodeSegmentation};
 
-use crate::{class_parser::iterator::ClassFileIterator, model::{class::Class, class_file::ClassFile, constant_pool::{ConstantPool, ConstantPoolEntry, ConstantPoolError, ConstantPoolIndex}, field::FieldDescriptor, method::{Method, MethodCode}, types::{JvmType, TypeReference}, value::JvmValue, visibility::Visibility}};
+use crate::{
+    class_parser::iterator::ClassFileIterator,
+    model::{
+        class::Class,
+        class_file::ClassFile,
+        constant_pool::{ConstantPool, ConstantPoolEntry, ConstantPoolError, ConstantPoolIndex, FieldReference},
+        field::FieldDescriptor,
+        method::{Method, MethodCode},
+        types::{JvmType, TypeReference},
+        value::JvmValue,
+        visibility::Visibility,
+    },
+};
 
-pub fn parse(
-    bytes: &[u8],
-) -> Result<(ClassFile, Class), ParsingError> {
+pub fn parse(bytes: &[u8]) -> Result<(ClassFile, Class), ParsingError> {
     let mut iter = ClassFileIterator::new(bytes);
 
     // Magic number
@@ -111,10 +121,10 @@ fn parse_constants(iter: &mut ClassFileIterator) -> Result<ConstantPool, Parsing
             }),
 
             // CONSTANT_Fieldref
-            9 => constants.push(ConstantPoolEntry::FieldReference {
+            9 => constants.push(ConstantPoolEntry::FieldReference(FieldReference::Unresolved {
                 class: iter.u16()?.into(),
                 name_and_type: iter.u16()?.into(),
-            }),
+            })),
 
             // CONSTANT_Methodref
             10 => constants.push(ConstantPoolEntry::MethodReference {
