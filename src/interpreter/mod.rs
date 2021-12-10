@@ -9,7 +9,7 @@ use crate::{
         constant_pool::{ConstantPoolError, ConstantPoolIndex},
         heap::{Heap, HeapIndex},
         method::{Method, MethodCode, Parameters},
-        types::{JvmType, TypeError},
+        types::TypeError,
         value::{
             JvmDouble, JvmFloat, JvmInt, JvmLong, JvmReference, JvmValue, JVM_EQUAL, JVM_GREATER,
             JVM_LESS,

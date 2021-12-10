@@ -38,6 +38,7 @@ fn main() {
         .unwrap();
 
     dbg!(&classes.resolve(class).get_static_field_by_name("y"));
+    dbg!(&classes.resolve_by_name("Test2", &mut heap).get_static_field_by_name("y"));
 
     /*
     let mut ops = dynasmrt::x64::Assembler::new().unwrap();
