@@ -50,7 +50,7 @@ pub fn execute_method(
         }
 
         let opcode = code[pc];
-        //println!("{:#04x}", opcode);
+        //println!("0x{:#04x}", opcode);
         match opcode {
             bytecode::ICONST_M1 => {
                 stack.push(StackValue::from_int(JvmInt(-1)));
@@ -728,51 +728,51 @@ pub fn execute_method(
             bytecode::RETURN => break Ok(JvmValue::Void),
 
             bytecode::GETSTATIC => {
-                let info = callee_class.resolve_field(
+                let (class, field) = callee_class.resolve_field(
                     index(code[pc + 1], code[pc + 2]),
                     true,
                     classes,
                     heap,
                 )?;
-                let field = callee_class.get_static_field(&info);
+                let field = classes.resolve(class).get_static_field(&field);
                 stack.push_value(field);
                 pc += 3;
             }
             bytecode::PUTSTATIC => {
                 // TODO use the type of the class found in the constant pool
-                let info = callee_class.resolve_field(
+                let (class, field) = callee_class.resolve_field(
                     index(code[pc + 1], code[pc + 2]),
                     true,
                     classes,
                     heap,
                 )?;
-                let ty = info.ty;
-                callee_class.set_static_field(info, stack.pop_type(ty));
+                let value = stack.pop_type(field.ty);
+                classes.resolve(class).set_static_field(field, value);
                 pc += 3;
             }
             bytecode::GETFIELD => {
-                let info = callee_class.resolve_field(
+                let (_, field) = callee_class.resolve_field(
                     index(code[pc + 1], code[pc + 2]),
                     false,
                     classes,
                     heap,
                 )?;
                 let objectref = stack.pop().as_reference();
-                let field = heap.resolve(objectref.to_heap_index()).get_field(info);
+                let field = heap.resolve(objectref.to_heap_index()).get_field(field);
                 stack.push_value(field);
                 pc += 3;
             }
             bytecode::PUTFIELD => {
-                let info = callee_class.resolve_field(
+                let (_, field) = callee_class.resolve_field(
                     index(code[pc + 1], code[pc + 2]),
                     false,
                     classes,
                     heap,
                 )?;
-                let value = stack.pop_type(info.ty);
+                let value = stack.pop_type(field.ty);
                 let objectref = stack.pop().as_reference();
                 heap.resolve_mut(objectref.to_heap_index())
-                    .set_field(info, value);
+                    .set_field(field, value);
                 pc += 3;
             }
 

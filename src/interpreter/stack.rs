@@ -131,8 +131,7 @@ impl InterpreterStack {
             JvmValue::Long(value) => self.push_wide(StackValue::from_long(value)),
             JvmValue::Float(value) => self.push(StackValue::from_float(value)),
             JvmValue::Double(value) => self.push_wide(StackValue::from_double(value)),
-            JvmValue::Reference(value) => self.push(StackValue::from_reference(value)),
-            _ => unreachable!(),
+            JvmValue::Reference(value) => self.push(StackValue::from_reference(value))
         }
     }
 }

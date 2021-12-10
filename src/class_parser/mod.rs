@@ -1,9 +1,9 @@
 mod attribute;
 mod iterator;
 
-use std::{iter::Peekable, str::Utf8Error};
+use std::str::Utf8Error;
 
-use unicode_segmentation::{Graphemes, UnicodeSegmentation};
+use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{
     class_parser::iterator::ClassFileIterator,
@@ -13,7 +13,7 @@ use crate::{
         constant_pool::{ConstantPool, ConstantPoolEntry, ConstantPoolError, ConstantPoolIndex, FieldReference},
         field::FieldDescriptor,
         method::{Method, MethodCode},
-        types::{JvmType, TypeReference},
+        types::JvmType,
         value::JvmValue,
         visibility::Visibility,
     },

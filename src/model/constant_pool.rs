@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use super::class::FieldInfo;
+use super::{class::FieldInfo, class_library::ClassIndex};
 
 #[derive(Debug)]
 pub struct ConstantPool {
@@ -51,9 +51,20 @@ impl ConstantPool {
         }
     }
 
-    pub fn update_resolved_field(&mut self, index: ConstantPoolIndex, info: FieldInfo) {
-        self.entries[(index.0 - 1) as usize] =
-            ConstantPoolEntry::FieldReference(FieldReference::Resolved { info });
+    pub fn update_resolved_field(
+        &self,
+        index: ConstantPoolIndex,
+        info: FieldInfo,
+        class: ClassIndex,
+    ) {
+        let entry = &self.entries[(index.0 - 1) as usize];
+        let field = ConstantPoolEntry::FieldReference(FieldReference::Resolved { info, class });
+
+        //Safety: This is a cache; nothing is changed here really and the cached value is constant
+        unsafe {
+            let entry = (entry as *const ConstantPoolEntry) as *mut ConstantPoolEntry;
+            *entry = field;
+        }
     }
 }
 
@@ -114,6 +125,7 @@ pub enum FieldReference {
     },
     Resolved {
         info: FieldInfo,
+        class: ClassIndex,
     },
 }
 
@@ -143,6 +155,8 @@ pub enum ConstantPoolError {
     #[error("The constant pool entry at {0} is expected to be of type class, but is actually {1}")]
     NotAClassReference(ConstantPoolIndex, ConstantPoolEntry),
 
-    #[error("The constant pool entry at {0} is expected to be of type NameAndType, but is actually {1}")]
+    #[error(
+        "The constant pool entry at {0} is expected to be of type NameAndType, but is actually {1}"
+    )]
     NotNameAndType(ConstantPoolIndex, ConstantPoolEntry),
 }

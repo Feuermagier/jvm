@@ -1,7 +1,5 @@
 use std::{cell::RefCell, collections::HashMap};
 
-use unicode_segmentation::UnicodeSegmentation;
-
 use crate::{
     interpreter::{self, ExecutionError},
     model::constant_pool::{ConstantPoolEntry, ConstantPoolError},
@@ -106,11 +104,11 @@ impl Class {
         static_field: bool,
         classes: &ClassLibrary,
         heap: &mut Heap,
-    ) -> Result<FieldInfo, ConstantPoolError> {
+    ) -> Result<(ClassIndex, FieldInfo), ConstantPoolError> {
         match self.constant_pool.get(index)? {
             //TODO use the class
             ConstantPoolEntry::FieldReference(reference) => match reference {
-                FieldReference::Resolved { info } => Ok(*info),
+                FieldReference::Resolved { info, class } => Ok((*class, *info)),
                 FieldReference::Unresolved {
                     name_and_type,
                     class,
@@ -136,7 +134,10 @@ impl Class {
                         ty: *ty,
                     };
 
-                    Ok(info)
+                    self.constant_pool
+                        .update_resolved_field(index, info, callee_class.index());
+
+                    Ok((callee_class.index(), info))
                 }
             },
             _ => Err(ConstantPoolError::FieldNotResolvable(index)),
