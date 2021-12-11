@@ -8,7 +8,7 @@ use crate::{
     interpreter::ExecutionError,
 };
 
-use super::{class::Class, constant_pool::ConstantPoolError, heap::Heap};
+use super::{class::{Class, ClassCreationError}, constant_pool::ConstantPoolError, heap::Heap};
 
 pub struct ClassLibrary {
     classes: AppendList<Class>,
@@ -44,8 +44,16 @@ impl ClassLibrary {
         let index = self.classes.len();
         log::info!("Loading class {}", name);
         let bytes = self.class_loader.load_class(name.to_string());
-        let (_class_file, mut class) = class_parser::parse(&bytes)?;
-        class.update_class_index(ClassIndex(index));
+        let (_file, data, constant_pool) = class_parser::parse(&bytes)?;
+
+        let super_class_index = if data.super_class.is_valid() {
+            let name = constant_pool.resolve_type(data.super_class)?;
+            Some(self.resolve_by_name(name, heap).index())
+        } else {
+            None
+        };
+
+        let class = Class::new(data, constant_pool, ClassIndex(index), super_class_index)?;
 
         self.name_mappings
             .borrow_mut()
@@ -72,6 +80,9 @@ pub enum ClassResolveError {
 
     #[error(transparent)]
     ClassParsing(#[from] ParsingError),
+
+    #[error(transparent)]
+    ClassCreation(#[from] ClassCreationError),
 
     #[error(transparent)]
     ClassInitialization(#[from] ExecutionError),

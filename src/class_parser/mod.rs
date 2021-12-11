@@ -5,21 +5,9 @@ use std::str::Utf8Error;
 
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::{
-    class_parser::iterator::ClassFileIterator,
-    model::{
-        class::Class,
-        class_file::ClassFile,
-        constant_pool::{ConstantPool, ConstantPoolEntry, ConstantPoolError, ConstantPoolIndex, FieldReference},
-        field::FieldDescriptor,
-        method::{Method, MethodCode},
-        types::JvmType,
-        value::JvmValue,
-        visibility::Visibility,
-    },
-};
+use crate::{class_parser::iterator::ClassFileIterator, model::{class_file::ClassFile, constant_pool::{ConstantPool, ConstantPoolEntry, ConstantPoolError, ConstantPoolIndex, FieldReference}, field::FieldDescriptor, method::{Method, MethodCode, MethodDescriptor}, types::JvmType, value::JvmValue, visibility::Visibility}};
 
-pub fn parse(bytes: &[u8]) -> Result<(ClassFile, Class), ParsingError> {
+pub fn parse(bytes: &[u8]) -> Result<(ClassFile, ClassData, ConstantPool), ParsingError> {
     let mut iter = ClassFileIterator::new(bytes);
 
     // Magic number
@@ -64,8 +52,7 @@ pub fn parse(bytes: &[u8]) -> Result<(ClassFile, Class), ParsingError> {
     let class_file = ClassFile::new(minor_version, major_version);
 
     // Create the actual class
-    let class = Class::new(
-        constant_pool,
+    let class = ClassData {
         visibility,
         this_class,
         super_class,
@@ -74,9 +61,9 @@ pub fn parse(bytes: &[u8]) -> Result<(ClassFile, Class), ParsingError> {
         fields,
         static_methods,
         methods,
-    );
+    };
 
-    Ok((class_file, class))
+    Ok((class_file, class, constant_pool))
 }
 
 fn parse_constants(iter: &mut ClassFileIterator) -> Result<ConstantPool, ParsingError> {
@@ -223,7 +210,7 @@ fn parse_fields(
 fn parse_methods(
     iter: &mut ClassFileIterator,
     constant_pool: &ConstantPool,
-) -> Result<(Vec<Method>, Vec<Method>), ParsingError> {
+) -> Result<(Vec<MethodDescriptor>, Vec<MethodDescriptor>), ParsingError> {
     let mut methods = Vec::new();
     let mut static_methods = Vec::new();
 
@@ -264,17 +251,17 @@ fn parse_methods(
         })?;
 
         let code = if let Some(bytecode) = code {
-            MethodCode::Bytecode(bytecode)
+            Some(bytecode)
         } else if is_native(access_flags) {
             log::info!("Encountered native method '{0}'", name);
-            MethodCode::Native(None)
+            None
         } else {
             return Err(ParsingError::MissingCode(name));
         };
 
         let (parameters, return_type) = parse_descriptor(&descriptor)?;
 
-        let method = Method {
+        let method = MethodDescriptor {
             name,
             parameters,
             return_type,
@@ -349,6 +336,17 @@ fn is_native(access_flags: u16) -> bool {
 }
 fn is_static(access_flags: u16) -> bool {
     access_flags & 0x0008 != 0
+}
+
+pub struct ClassData {
+    pub visibility: Visibility,
+    pub this_class: ConstantPoolIndex,
+    pub super_class: ConstantPoolIndex,
+    pub interfaces: Vec<ConstantPoolIndex>,
+    pub static_fields: Vec<FieldDescriptor>,
+    pub fields: Vec<FieldDescriptor>,
+    pub static_methods: Vec<MethodDescriptor>,
+    pub methods: Vec<MethodDescriptor>,
 }
 
 #[derive(thiserror::Error, Debug)]

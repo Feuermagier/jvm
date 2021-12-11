@@ -66,11 +66,25 @@ impl ConstantPool {
             *entry = field;
         }
     }
+
+    pub fn resolve_type(&self, index: ConstantPoolIndex) -> Result<&str, ConstantPoolError> {
+        match self.get(index)? {
+            ConstantPoolEntry::Class { name } => self.get_utf8(*name),
+            _ => Err(ConstantPoolError::TypeNotResolvable(index)),
+        }
+    }
+
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(transparent)]
 pub struct ConstantPoolIndex(u16);
+
+impl ConstantPoolIndex {
+    pub fn is_valid(&self) -> bool {
+        self.0 != 0
+    }
+}
 
 impl From<u16> for ConstantPoolIndex {
     fn from(index: u16) -> Self {

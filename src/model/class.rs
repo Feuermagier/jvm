@@ -1,36 +1,31 @@
 use std::{cell::RefCell, collections::HashMap};
 
 use crate::{
+    class_parser::ClassData,
     interpreter::{self, ExecutionError},
     model::constant_pool::{ConstantPoolEntry, ConstantPoolError},
 };
 
 use super::{
-    class_library::{ClassIndex, ClassLibrary, ClassNotLoadedIndex},
+    class_library::{ClassIndex, ClassLibrary},
     constant_pool::{ConstantPool, ConstantPoolIndex, FieldReference},
     field::FieldDescriptor,
     fields::Fields,
     heap::{Heap, HeapIndex},
-    method::{Method, Parameters},
+    method::{Method, MethodDescriptor, Parameters},
     types::JvmType,
     value::JvmValue,
-    visibility::Visibility,
 };
 
 pub struct Class {
     index: ClassIndex,
-
+    super_class: Option<ClassIndex>,
+    data: ClassData,
     constant_pool: ConstantPool,
-    visibility: Visibility,
-    this_class: ConstantPoolIndex,
-    super_class: ConstantPoolIndex,
-    interfaces: Vec<ConstantPoolIndex>,
 
-    static_field_descriptors: Vec<FieldDescriptor>,
     static_field_offsets: HashMap<String, (usize, JvmType)>,
     static_fields: RefCell<Fields>,
 
-    field_descriptors: Vec<FieldDescriptor>,
     fields_size: usize,
     field_offsets: HashMap<String, (usize, JvmType)>,
 
@@ -40,50 +35,43 @@ pub struct Class {
 
 impl Class {
     pub fn new(
+        mut data: ClassData,
         constant_pool: ConstantPool,
-        visibility: Visibility,
-        this_class: ConstantPoolIndex,
-        super_class: ConstantPoolIndex,
-        interfaces: Vec<ConstantPoolIndex>,
-        static_field_descriptors: Vec<FieldDescriptor>,
-        field_descriptors: Vec<FieldDescriptor>,
-        mut static_methods: Vec<Method>,
-        mut methods: Vec<Method>,
-    ) -> Self {
-        let (static_fields_size, static_field_offsets) = place_fields(&static_field_descriptors);
-        let (fields_size, field_offsets) = place_fields(&field_descriptors);
+        index: ClassIndex,
+        super_class_index: Option<ClassIndex>,
+    ) -> Result<Self, ClassCreationError> {
+        let (static_fields_size, static_field_offsets) = place_fields(&data.static_fields);
+        let (fields_size, field_offsets) = place_fields(&data.fields);
 
         let static_fields = init_fields(
-            &static_field_descriptors,
+            &data.static_fields,
             &static_field_offsets,
             static_fields_size,
         );
 
-        let static_methods = static_methods
-            .drain(..)
-            .map(|method| (method.name.clone(), method))
+        let static_methods = data
+            .static_methods
+            .iter()
+            .map(|method| (method.name.clone(), setup_method(method)))
             .collect();
-        let methods = methods
-            .drain(..)
-            .map(|method| (method.name.clone(), method))
+        let methods = data
+            .methods
+            .iter()
+            .map(|method| (method.name.clone(), setup_method(method)))
             .collect();
 
-        Self {
-            index: ClassNotLoadedIndex,
+        Ok(Self {
+            index,
+            data,
+            super_class: super_class_index,
             constant_pool,
-            visibility,
-            this_class,
-            super_class,
-            interfaces,
-            static_field_descriptors,
             static_field_offsets,
             static_fields: RefCell::new(static_fields),
-            field_descriptors,
             fields_size,
             field_offsets,
             static_methods,
             methods,
-        }
+        })
     }
 
     pub fn update_class_index(&mut self, index: ClassIndex) {
@@ -144,13 +132,6 @@ impl Class {
         }
     }
 
-    pub fn resolve_type(&self, index: ConstantPoolIndex) -> Result<&str, ConstantPoolError> {
-        match self.constant_pool.get(index)? {
-            ConstantPoolEntry::Class { name } => self.constant_pool.get_utf8(*name),
-            _ => Err(ConstantPoolError::TypeNotResolvable(index)),
-        }
-    }
-
     pub fn resolve_method(
         &self,
         index: ConstantPoolIndex,
@@ -161,7 +142,7 @@ impl Class {
                 name_and_type,
             } => match self.constant_pool.get(*name_and_type)? {
                 ConstantPoolEntry::NameAndType { name, ty } => Ok((
-                    self.resolve_type(*class)?,
+                    self.constant_pool.resolve_type(*class)?,
                     self.constant_pool.get_utf8(*name)?,
                     self.constant_pool.get_utf8(*ty)?,
                 )),
@@ -252,20 +233,20 @@ impl Class {
     pub fn instantiate(&self) -> Instance {
         Instance {
             class: self.index,
-            fields: init_fields(
-                &self.field_descriptors,
-                &self.field_offsets,
-                self.fields_size,
-            ),
+            fields: init_fields(&self.data.fields, &self.field_offsets, self.fields_size),
         }
     }
 
     pub fn name(&self) -> Result<&str, ConstantPoolError> {
-        self.resolve_type(self.this_class)
+        self.constant_pool.resolve_type(self.data.this_class)
     }
 
     pub fn index(&self) -> ClassIndex {
         self.index
+    }
+
+    pub fn resolve_type(&self, index: ConstantPoolIndex) -> Result<&str, ConstantPoolError> {
+        self.constant_pool.resolve_type(index)
     }
 }
 
@@ -322,6 +303,18 @@ fn init_fields(
     fields
 }
 
+fn setup_method(descriptor: &MethodDescriptor) -> Method {
+    if descriptor.code.is_some() {
+        Method::new_bytecode_method(descriptor)
+    } else {
+        log::warn!(
+            "Native method '{}', binding a noop implementation",
+            &descriptor.name
+        );
+        Method::new_native_method(descriptor, Box::new(|_| JvmValue::Void))
+    }
+}
+
 #[derive(thiserror::Error, Debug)]
 pub enum FieldError {
     #[error("Unknown instance field '#{0}'")]
@@ -338,6 +331,12 @@ pub enum MethodError {
 
     #[error("Unknown static method '#{0}'")]
     UnknownStaticMethod(String),
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum ClassCreationError {
+    #[error("Failed to resolve the super class")]
+    SuperclassResolutionFailed(#[from] ConstantPoolError),
 }
 
 /*
