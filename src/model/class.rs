@@ -9,8 +9,7 @@ use crate::{
 use super::{
     class_library::{ClassIndex, ClassLibrary},
     constant_pool::{ConstantPool, ConstantPoolIndex, FieldReference},
-    field::FieldDescriptor,
-    fields::Fields,
+    field::{self, FieldDescriptor, FieldInfo, FieldLayout, Fields},
     heap::{Heap, HeapIndex},
     method::{Method, MethodDescriptor, Parameters},
     types::JvmType,
@@ -23,11 +22,10 @@ pub struct Class {
     data: ClassData,
     constant_pool: ConstantPool,
 
-    static_field_offsets: HashMap<String, (usize, JvmType)>,
+    static_field_layout: FieldLayout,
     static_fields: RefCell<Fields>,
 
-    fields_size: usize,
-    field_offsets: HashMap<String, (usize, JvmType)>,
+    field_layout: FieldLayout,
 
     static_methods: HashMap<String, Method>,
     methods: HashMap<String, Method>,
@@ -35,19 +33,20 @@ pub struct Class {
 
 impl Class {
     pub fn new(
-        mut data: ClassData,
+        data: ClassData,
         constant_pool: ConstantPool,
         index: ClassIndex,
-        super_class_index: Option<ClassIndex>,
+        super_class: Option<&Class>,
     ) -> Result<Self, ClassCreationError> {
-        let (static_fields_size, static_field_offsets) = place_fields(&data.static_fields);
-        let (fields_size, field_offsets) = place_fields(&data.fields);
+        let static_field_layout = field::layout_fields(&FieldLayout::empty(), &data.static_fields);
+        let static_fields = Fields::init_from_layout(&static_field_layout);
 
-        let static_fields = init_fields(
-            &data.static_fields,
-            &static_field_offsets,
-            static_fields_size,
-        );
+        let field_layout = if let Some(super_class) = super_class {
+            let super_field_layout = &super_class.field_layout;
+            field::layout_fields(super_field_layout, &data.fields)
+        } else {
+            field::layout_fields(&FieldLayout::empty(), &data.fields)
+        };
 
         let static_methods = data
             .static_methods
@@ -63,12 +62,11 @@ impl Class {
         Ok(Self {
             index,
             data,
-            super_class: super_class_index,
+            super_class: super_class.map(|class| class.index()),
             constant_pool,
-            static_field_offsets,
+            static_field_layout,
             static_fields: RefCell::new(static_fields),
-            fields_size,
-            field_offsets,
+            field_layout,
             static_methods,
             methods,
         })
@@ -86,13 +84,49 @@ impl Class {
         Ok(())
     }
 
-    pub fn resolve_field(
+    pub fn resolve_instance_field(
         &self,
         index: ConstantPoolIndex,
-        static_field: bool,
         classes: &ClassLibrary,
         heap: &mut Heap,
-    ) -> Result<(ClassIndex, FieldInfo), ConstantPoolError> {
+    ) -> Result<FieldInfo, FieldError> {
+        match self.constant_pool.get(index)? {
+            //TODO use the class
+            ConstantPoolEntry::FieldReference(reference) => match reference {
+                FieldReference::Resolved { info, class } => Ok(*info),
+                FieldReference::Unresolved {
+                    name_and_type,
+                    class,
+                } => {
+                    let (name, ty) = self.constant_pool.get_name_and_type(*name_and_type)?;
+                    //let ty_str = self.constant_pool.get_utf8(ty)?;
+                    let name = self.constant_pool.get_utf8(name)?;
+
+                    let callee_class_name = self
+                        .constant_pool
+                        .get_utf8(self.constant_pool.get_class(*class)?)?;
+                    let callee_class = classes.resolve_by_name(callee_class_name, heap);
+
+                    let info = callee_class.field_layout.resolve(name)?;
+
+                    self.constant_pool
+                        .update_resolved_field(index, info, callee_class.index());
+
+                    Ok(info)
+                }
+            },
+            _ => Err(FieldError::ConstantPool(
+                ConstantPoolError::FieldNotResolvable(index),
+            )),
+        }
+    }
+
+    pub fn resolve_static_field(
+        &self,
+        index: ConstantPoolIndex,
+        classes: &ClassLibrary,
+        heap: &mut Heap,
+    ) -> Result<(ClassIndex, FieldInfo), FieldError> {
         match self.constant_pool.get(index)? {
             //TODO use the class
             ConstantPoolEntry::FieldReference(reference) => match reference {
@@ -108,27 +142,36 @@ impl Class {
                     let callee_class_name = self
                         .constant_pool
                         .get_utf8(self.constant_pool.get_class(*class)?)?;
-                    let callee_class = classes.resolve_by_name(callee_class_name, heap);
 
-                    let (offset, ty) = if static_field {
-                        &callee_class.static_field_offsets
-                    } else {
-                        &callee_class.field_offsets
-                    }
-                    .get(name)
-                    .ok_or(ConstantPoolError::FieldNotResolvable(index))?;
-                    let info = FieldInfo {
-                        offset: *offset,
-                        ty: *ty,
-                    };
+                    let (owning_class, info) = classes
+                        .resolve_by_name(callee_class_name, heap)
+                        .resolve_own_static_field(name, classes)?;
 
                     self.constant_pool
-                        .update_resolved_field(index, info, callee_class.index());
+                        .update_resolved_field(index, info, owning_class);
 
-                    Ok((callee_class.index(), info))
+                    Ok((owning_class, info))
                 }
             },
-            _ => Err(ConstantPoolError::FieldNotResolvable(index)),
+            _ => Err(FieldError::ConstantPool(
+                ConstantPoolError::FieldNotResolvable(index),
+            )),
+        }
+    }
+
+    fn resolve_own_static_field(
+        &self,
+        name: &str,
+        classes: &ClassLibrary,
+    ) -> Result<(ClassIndex, FieldInfo), FieldError> {
+        if let Ok(info) = self.static_field_layout.resolve(name) {
+            Ok((self.index(), info))
+        } else if let Some(super_class) = self.super_class {
+            classes
+                .resolve(super_class)
+                .resolve_own_static_field(name, classes)
+        } else {
+            Err(FieldError::StaticFieldFound(name.to_string()))
         }
     }
 
@@ -152,13 +195,17 @@ impl Class {
         }
     }
 
-    pub fn get_static_field(&self, info: &FieldInfo) -> JvmValue {
+    pub fn get_static_field(&self, info: FieldInfo) -> JvmValue {
         self.static_fields.borrow().get_value(info.offset, info.ty)
     }
 
-    pub fn get_static_field_by_name(&self, name: &str) -> JvmValue {
-        let (offset, ty) = *self.static_field_offsets.get(name).unwrap();
-        self.get_static_field(&FieldInfo { offset, ty })
+    pub fn get_static_field_by_name(
+        &self,
+        name: &str,
+        classes: &ClassLibrary,
+    ) -> Result<JvmValue, FieldError> {
+        let (class, info) = self.resolve_own_static_field(name, classes)?;
+        Ok(classes.resolve(class).get_static_field(info))
     }
 
     pub fn set_static_field(&self, info: FieldInfo, value: JvmValue) {
@@ -233,7 +280,7 @@ impl Class {
     pub fn instantiate(&self) -> Instance {
         Instance {
             class: self.index,
-            fields: init_fields(&self.data.fields, &self.field_offsets, self.fields_size),
+            fields: Fields::init_from_layout(&self.field_layout),
         }
     }
 
@@ -248,12 +295,6 @@ impl Class {
     pub fn resolve_type(&self, index: ConstantPoolIndex) -> Result<&str, ConstantPoolError> {
         self.constant_pool.resolve_type(index)
     }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct FieldInfo {
-    pub offset: usize,
-    pub ty: JvmType,
 }
 
 pub struct Instance {
@@ -288,21 +329,6 @@ fn place_fields(descriptors: &Vec<FieldDescriptor>) -> (usize, HashMap<String, (
     (offset, offset_map)
 }
 
-fn init_fields(
-    descriptors: &Vec<FieldDescriptor>,
-    offsets: &HashMap<String, (usize, JvmType)>,
-    length: usize,
-) -> Fields {
-    let mut fields = Fields::new(length);
-    for desc in descriptors {
-        if let Some(value) = desc.constant_value {
-            let (offset, ty) = &offsets[&desc.name];
-            fields.set_value(*offset, value);
-        }
-    }
-    fields
-}
-
 fn setup_method(descriptor: &MethodDescriptor) -> Method {
     if descriptor.code.is_some() {
         Method::new_bytecode_method(descriptor)
@@ -313,15 +339,6 @@ fn setup_method(descriptor: &MethodDescriptor) -> Method {
         );
         Method::new_native_method(descriptor, Box::new(|_| JvmValue::Void))
     }
-}
-
-#[derive(thiserror::Error, Debug)]
-pub enum FieldError {
-    #[error("Unknown instance field '#{0}'")]
-    UnknownInstanceField(String),
-
-    #[error("Unknown static field '#{0}'")]
-    UnknownStaticField(String),
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -337,6 +354,18 @@ pub enum MethodError {
 pub enum ClassCreationError {
     #[error("Failed to resolve the super class")]
     SuperclassResolutionFailed(#[from] ConstantPoolError),
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum FieldError {
+    #[error(transparent)]
+    FieldNotResolvable(#[from] field::FieldError),
+
+    #[error("The static field {0} cannot be resolved")]
+    StaticFieldFound(String),
+
+    #[error(transparent)]
+    ConstantPool(#[from] ConstantPoolError),
 }
 
 /*

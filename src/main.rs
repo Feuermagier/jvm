@@ -30,15 +30,16 @@ fn main() {
 
     classes.resolve_by_name("classes/Object", &mut heap);
 
-    let class = classes.resolve_by_name("Test", &mut heap).index();
+    let class = classes.resolve_by_name("Test2", &mut heap).index();
 
     classes
         .resolve(class)
         .call_static_method("main", Parameters::empty(), &classes, &mut heap)
         .unwrap();
 
-    dbg!(&classes.resolve(class).get_static_field_by_name("y"));
-    dbg!(&classes.resolve_by_name("Test2", &mut heap).get_static_field_by_name("y"));
+    dbg!(&classes
+        .resolve_by_name("Test2", &mut heap)
+        .get_static_field_by_name("y", &classes));
 
     /*
     let mut ops = dynasmrt::x64::Assembler::new().unwrap();

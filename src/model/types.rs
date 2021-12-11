@@ -68,6 +68,10 @@ impl JvmType {
         }
     }
 
+    pub fn alignment(&self) -> usize {
+        self.size()
+    }
+
     pub fn parse(graphemes: &mut Peekable<Graphemes>) -> Option<JvmType> {
         let tag = graphemes.next();
         if tag.is_none() {

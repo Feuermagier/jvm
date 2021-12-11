@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use super::{class::FieldInfo, class_library::ClassIndex};
+use super::{field::FieldInfo, class_library::ClassIndex};
 
 #[derive(Debug)]
 pub struct ConstantPool {

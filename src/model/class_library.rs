@@ -8,7 +8,11 @@ use crate::{
     interpreter::ExecutionError,
 };
 
-use super::{class::{Class, ClassCreationError}, constant_pool::ConstantPoolError, heap::Heap};
+use super::{
+    class::{Class, ClassCreationError},
+    constant_pool::ConstantPoolError,
+    heap::Heap,
+};
 
 pub struct ClassLibrary {
     classes: AppendList<Class>,
@@ -41,24 +45,24 @@ impl ClassLibrary {
 
     /// This function should only be called by a class parser
     pub fn load(&self, name: &str, heap: &mut Heap) -> Result<ClassIndex, ClassResolveError> {
-        let index = self.classes.len();
         log::info!("Loading class {}", name);
         let bytes = self.class_loader.load_class(name.to_string());
         let (_file, data, constant_pool) = class_parser::parse(&bytes)?;
 
-        let super_class_index = if data.super_class.is_valid() {
+        let super_class = if data.super_class.is_valid() {
             let name = constant_pool.resolve_type(data.super_class)?;
-            Some(self.resolve_by_name(name, heap).index())
+            Some(self.resolve_by_name(name, heap))
         } else {
             None
         };
 
-        let class = Class::new(data, constant_pool, ClassIndex(index), super_class_index)?;
-
+        // The following code for creating and updating the class must not be interrupted by an access to the ClassLibrary
+        // or the indices will be wrong
+        let index = self.classes.len();
+        let class = Class::new(data, constant_pool, ClassIndex(index), super_class)?;
         self.name_mappings
             .borrow_mut()
             .insert(class.name()?.to_string(), index);
-
         self.classes.push(class);
 
         self.classes[index].bootstrap(self, heap)?;
@@ -70,8 +74,6 @@ impl ClassLibrary {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(transparent)]
 pub struct ClassIndex(pub usize);
-
-pub const ClassNotLoadedIndex: ClassIndex = ClassIndex(0);
 
 #[derive(thiserror::Error, Debug)]
 pub enum ClassResolveError {

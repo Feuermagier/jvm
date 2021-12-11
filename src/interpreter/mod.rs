@@ -728,21 +728,19 @@ pub fn execute_method(
             bytecode::RETURN => break Ok(JvmValue::Void),
 
             bytecode::GETSTATIC => {
-                let (class, field) = callee_class.resolve_field(
+                let (class, field) = callee_class.resolve_static_field(
                     index(code[pc + 1], code[pc + 2]),
-                    true,
                     classes,
                     heap,
                 )?;
-                let field = classes.resolve(class).get_static_field(&field);
+                let field = classes.resolve(class).get_static_field(field);
                 stack.push_value(field);
                 pc += 3;
             }
             bytecode::PUTSTATIC => {
                 // TODO use the type of the class found in the constant pool
-                let (class, field) = callee_class.resolve_field(
+                let (class, field) = callee_class.resolve_static_field(
                     index(code[pc + 1], code[pc + 2]),
-                    true,
                     classes,
                     heap,
                 )?;
@@ -751,9 +749,8 @@ pub fn execute_method(
                 pc += 3;
             }
             bytecode::GETFIELD => {
-                let (_, field) = callee_class.resolve_field(
+                let field = callee_class.resolve_instance_field(
                     index(code[pc + 1], code[pc + 2]),
-                    false,
                     classes,
                     heap,
                 )?;
@@ -763,9 +760,8 @@ pub fn execute_method(
                 pc += 3;
             }
             bytecode::PUTFIELD => {
-                let (_, field) = callee_class.resolve_field(
+                let field = callee_class.resolve_instance_field(
                     index(code[pc + 1], code[pc + 2]),
-                    false,
                     classes,
                     heap,
                 )?;
