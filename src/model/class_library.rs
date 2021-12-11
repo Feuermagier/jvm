@@ -48,7 +48,6 @@ impl ClassLibrary {
 
         let super_class_index = if data.super_class.is_valid() {
             let name = constant_pool.resolve_type(data.super_class)?;
-            dbg!("Loading super class {}", name);
             Some(self.resolve_by_name(name, heap).index())
         } else {
             None
