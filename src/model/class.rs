@@ -84,6 +84,7 @@ impl Class {
         Ok(())
     }
 
+    //todo: This will definitely not work for shadowed fields
     pub fn resolve_instance_field(
         &self,
         index: ConstantPoolIndex,
