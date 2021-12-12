@@ -94,7 +94,7 @@ impl Class {
         match self.constant_pool.get(index)? {
             //TODO use the class
             ConstantPoolEntry::FieldReference(reference) => match reference {
-                FieldReference::Resolved { info, class } => Ok(*info),
+                FieldReference::Resolved { info, .. } => Ok(*info),
                 FieldReference::Unresolved {
                     name_and_type,
                     class,
@@ -172,7 +172,7 @@ impl Class {
                 .resolve(super_class)
                 .resolve_own_static_field(name, classes)
         } else {
-            Err(FieldError::StaticFieldFound(name.to_string()))
+            Err(FieldError::StaticFieldNotFound(name.to_string()))
         }
     }
 
@@ -363,7 +363,7 @@ pub enum FieldError {
     FieldNotResolvable(#[from] field::FieldError),
 
     #[error("The static field {0} cannot be resolved")]
-    StaticFieldFound(String),
+    StaticFieldNotFound(String),
 
     #[error(transparent)]
     ConstantPool(#[from] ConstantPoolError),

@@ -1,12 +1,16 @@
 public class Test2 extends Test {
-	public int x = 2;
+	public double y;
+    static double a;
+    static double b;
 	public static void main() {
-        var test = new Test2();
-		test.x = 13;
-		test.y = 42;
+        new Test2().foo();
     }
-	
-	public void foo() {
-		super.x = 3;
-	}
+    
+    void foo() {
+        
+        super.y = 2;
+        this.y = 1;
+        a = this.y;
+        b = super.y;
+    }
 }
