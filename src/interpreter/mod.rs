@@ -738,7 +738,6 @@ pub fn execute_method(
                 pc += 3;
             }
             bytecode::PUTSTATIC => {
-                // TODO use the type of the class found in the constant pool
                 let (class, field) = callee_class.resolve_static_field(
                     index(code[pc + 1], code[pc + 2]),
                     classes,

@@ -6,9 +6,7 @@ pub mod model;
 
 use core::slice;
 use std::{
-    fs::File,
-    io::{self, Read, Write},
-    mem,
+    io::{self, Write},
 };
 
 use dynasmrt::{dynasm, DynasmApi, DynasmLabelApi};
