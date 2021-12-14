@@ -42,7 +42,7 @@ pub fn create_method(desc: &MethodDescriptor, code: &Vec<u8>, callee_class: Clas
 }
 */
 
-pub extern "C" fn interpret_method(
+pub extern "win64" fn interpret_method(
     method_index: MethodIndex,
     heap: &mut Heap,
     classes: &ClassLibrary,

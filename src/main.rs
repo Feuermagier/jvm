@@ -4,9 +4,6 @@ pub mod class_parser;
 pub mod interpreter;
 pub mod model;
 
-use core::slice;
-use std::io::{self, Write};
-
 use dynasmrt::{dynasm, DynasmApi, DynasmLabelApi};
 use model::method::Parameters;
 
@@ -15,7 +12,51 @@ use crate::{
     model::{class_library::ClassLibrary, heap::Heap, method::MethodTable},
 };
 
+#[derive(Copy, Clone, bytemuck::Zeroable, bytemuck::Pod)]
+#[repr(C)]
+struct Test {
+    a: u64,
+    b: f64,
+}
+
 fn main() {
+
+    let test = Test {
+        a: 13,
+        b: 42.0,
+    };
+
+    let mut ops = dynasmrt::x64::Assembler::new().unwrap();
+    
+    dynasm!(ops
+        ; .arch x64
+        ; ->test:
+        ; .bytes bytemuck::bytes_of(&test)
+    );
+    let hello = ops.offset();
+    dynasm!(ops
+        ; .arch x64
+        ; lea rcx, [->test]
+        ; add rcx, BYTE bytemuck::offset_of!(test, Test, a) as i8
+        ; mov rcx, [rcx]
+        ; lea rdx, [->test]
+        ; add rdx, BYTE bytemuck::offset_of!(test, Test, b) as i8
+        ; movq xmm1, QWORD [rdx]
+        ; mov rax, QWORD print as _
+        ; sub rsp, BYTE 0x28
+        ; call rax
+        ; add rsp, BYTE 0x28
+        ; ret
+    );
+
+    let buf = ops.finalize().unwrap();
+
+    let hello_fn: extern "win64" fn() = unsafe { std::mem::transmute(buf.ptr(hello)) };
+
+    hello_fn();
+
+    return;
+
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
         .init();
@@ -77,8 +118,6 @@ fn main() {
     */
 }
 
-pub extern "win64" fn print(buffer: *const u8, length: u64) -> bool {
-    io::stdout()
-        .write_all(unsafe { slice::from_raw_parts(buffer, length as usize) })
-        .is_ok()
+pub extern "win64" fn print(a: u32, b: f64) {
+    println!("a: {}, b: {}", a, b);
 }

@@ -67,7 +67,7 @@ impl Debug for MethodCode {
 }
 
 pub type MethodImplementation =
-    extern "C" fn(MethodIndex, &mut Heap, &ClassLibrary, &MethodTable, Option<HeapIndex>, Parameters) -> JvmValue;
+    extern "win64" fn(MethodIndex, &mut Heap, &ClassLibrary, &MethodTable, Option<HeapIndex>, Parameters) -> JvmValue;
 
 pub struct MethodTable {
     methods: AppendList<MethodEntry>,
