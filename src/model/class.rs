@@ -11,7 +11,7 @@ use super::{
     constant_pool::{ConstantPool, ConstantPoolIndex, FieldReference, MethodReference},
     field::{self, FieldDescriptor, FieldInfo, FieldLayout, Fields},
     heap::Heap,
-    method::{Method, MethodIndex, MethodTable, Parameters},
+    method::{Method, MethodCode, MethodIndex, MethodTable, Parameters},
     types::JvmType,
     value::JvmValue,
 };
@@ -56,27 +56,16 @@ impl Class {
             HashMap::new()
         };
         for desc in &data.static_methods {
-            if let Some(code) = &desc.code {
-                let name = desc.name.clone();
-                let code = code.clone();
-                let max_stack = desc.max_stack;
-                let max_locals = desc.max_locals;
-                let method_index = methods.add_method(Box::new(
-                    move |heap, classes, methods, this, parameters| {
-                        let method = Method {
-                            name: &name,
-                            code: &code,
-                            max_stack,
-                            max_locals,
-                        };
-                        interpreter::execute_method(
-                            method, parameters, index, this, classes, heap, methods,
-                        )
-                        .unwrap()
-                    },
-                ));
-                // Quite sure parameters.len() isn't correct: Parameter count should be in words (i.e. 4 bytes), but parameter_count will be e.g. 1 for a double
-                static_methods.insert(desc.name.to_string(), (method_index, desc.parameters.len()));
+            match &desc.code {
+                MethodCode::Bytecode(code) => {
+                    let method_index =
+                        methods.add_method(interpreter::create_method(desc, code, index));
+                    // Quite sure parameters.len() isn't correct: Parameter count should be in words (i.e. 4 bytes), but parameter_count will be e.g. 1 for a double
+                    static_methods
+                        .insert(desc.name.to_string(), (method_index, desc.parameters.len()));
+                }
+                MethodCode::Abstract => {panic!("Abstract static method")}
+                MethodCode::Native => {}   // TODO
             }
         }
 
@@ -92,44 +81,32 @@ impl Class {
         };
 
         for desc in &data.methods {
-            if let Some(code) = &desc.code {
-                let name = desc.name.clone();
-                let code = code.clone();
-                let max_stack = desc.max_stack;
-                let max_locals = desc.max_locals;
-                let method_index = methods.add_method(Box::new(
-                    move |heap, classes, methods, this, parameters| {
-                        let method = Method {
-                            name: &name,
-                            code: &code,
-                            max_stack,
-                            max_locals,
-                        };
-                        interpreter::execute_method(
-                            method, parameters, index, this, classes, heap, methods,
-                        )
-                        .unwrap()
-                    },
-                ));
+            match &desc.code {
+                MethodCode::Bytecode(code) => {
+                    let method_index =
+                        methods.add_method(interpreter::create_method(desc, code, index));
 
-                if let Some((old_method_index, virtual_index, _)) =
-                    virtual_methods.get_mut(&desc.name)
-                {
-                    dispatch_table[virtual_index.0] = method_index;
-                    *old_method_index = method_index;
-                } else {
-                    let virtual_index = dispatch_table.len();
-                    dispatch_table.push(method_index);
-                    // Quite sure parameters.len() isn't correct: Parameter count should be in words (i.e. 4 bytes), but parameter_count will be e.g. 1 for a double
-                    virtual_methods.insert(
-                        desc.name.to_string(),
-                        (
-                            method_index,
-                            VirtualMethodIndex(virtual_index),
-                            desc.parameters.len(),
-                        ),
-                    );
-                }
+                    if let Some((old_method_index, virtual_index, _)) =
+                        virtual_methods.get_mut(&desc.name)
+                    {
+                        dispatch_table[virtual_index.0] = method_index;
+                        *old_method_index = method_index;
+                    } else {
+                        let virtual_index = dispatch_table.len();
+                        dispatch_table.push(method_index);
+                        // Quite sure parameters.len() isn't correct: Parameter count should be in words (i.e. 4 bytes), but parameter_count will be e.g. 1 for a double
+                        virtual_methods.insert(
+                            desc.name.to_string(),
+                            (
+                                method_index,
+                                VirtualMethodIndex(virtual_index),
+                                desc.parameters.len(),
+                            ),
+                        );
+                    }
+                },
+                MethodCode::Abstract => {} // Abstract method, don't do anything
+                MethodCode::Native => {}   // TODO
             }
         }
 
@@ -415,47 +392,6 @@ impl Class {
             .borrow_mut()
             .set_value(info.offset, value);
     }
-
-    /*
-    pub fn call_static_method(
-        &self,
-        name: &str,
-        parameters: Parameters,
-        classes: &ClassLibrary,
-        heap: &mut Heap,
-    ) -> Result<JvmValue, ExecutionError> {
-        // Resolve the method in super classes
-        interpreter::execute_method(
-            self.get_static_method(name)?,
-            parameters,
-            self,
-            None,
-            classes,
-            heap,
-        )
-    }
-    */
-
-    /*
-    pub fn call_method(
-        &self,
-        name: &str,
-        parameters: Parameters,
-        this: HeapIndex,
-        classes: &ClassLibrary,
-        heap: &mut Heap,
-    ) -> Result<JvmValue, ExecutionError> {
-        // Resolve the method in super classes
-        interpreter::execute_method(
-            (*self.get_method(name)?).clone(),
-            parameters,
-            self.index(),
-            Some(this),
-            classes,
-            heap,
-        )
-    }
-    */
 
     pub fn get_loadable(&self, index: ConstantPoolIndex) -> Result<JvmValue, ConstantPoolError> {
         let value = self.constant_pool.get(index)?;

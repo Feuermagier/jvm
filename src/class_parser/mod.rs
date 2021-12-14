@@ -14,7 +14,7 @@ use crate::{
             MethodReference,
         },
         field::FieldDescriptor,
-        method::MethodDescriptor,
+        method::{MethodCode, MethodDescriptor},
         types::JvmType,
         value::JvmValue,
         visibility::Visibility,
@@ -269,10 +269,12 @@ fn parse_methods(
         })?;
 
         let code = if let Some(bytecode) = code {
-            Some(bytecode)
+            MethodCode::Bytecode(bytecode)
         } else if is_native(access_flags) {
             log::info!("Encountered native method '{0}'", name);
-            None
+            MethodCode::Native
+        } else if is_abstract(access_flags) {
+            MethodCode::Abstract
         } else {
             return Err(ParsingError::MissingCode(name));
         };
@@ -354,6 +356,9 @@ fn is_native(access_flags: u16) -> bool {
 }
 fn is_static(access_flags: u16) -> bool {
     access_flags & 0x0008 != 0
+}
+fn is_abstract(access_flags: u16) -> bool {
+    access_flags & 0x0400 != 0
 }
 
 pub struct ClassData {

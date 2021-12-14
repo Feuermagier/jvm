@@ -6,7 +6,5 @@ public class Test2 extends Test {
     
     void foo() {
         a = 1;
-        super.foo();
-
     }
 }

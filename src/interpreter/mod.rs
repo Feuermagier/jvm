@@ -8,7 +8,7 @@ use crate::{
         class_library::{ClassIndex, ClassLibrary},
         constant_pool::{ConstantPoolError, ConstantPoolIndex},
         heap::{Heap, HeapIndex},
-        method::{Method, MethodTable, Parameters},
+        method::{Method, MethodTable, Parameters, MethodDescriptor, MethodImplementation},
         types::TypeError,
         value::{
             JvmDouble, JvmFloat, JvmInt, JvmLong, JvmReference, JvmValue, JVM_EQUAL, JVM_GREATER,
@@ -18,6 +18,27 @@ use crate::{
 };
 
 use self::{locals::InterpreterLocals, stack::InterpreterStack};
+
+pub fn create_method(desc: &MethodDescriptor, code: &Vec<u8>, callee_class: ClassIndex) -> Box<MethodImplementation> {
+    let name = desc.name.clone();
+    let code = code.clone();
+    let max_stack = desc.max_stack;
+    let max_locals = desc.max_locals;
+    Box::new(
+        move |heap, classes, methods, this, parameters| {
+            let method = Method {
+                name: &name,
+                code: &code,
+                max_stack,
+                max_locals,
+            };
+            execute_method(
+                method, parameters, callee_class, this, classes, heap, methods,
+            )
+            .unwrap()
+        },
+    )
+}
 
 pub fn execute_method(
     method: Method,
@@ -841,7 +862,7 @@ pub fn execute_method(
     return_value
 }
 
-#[inline]
+#[inline(always)]
 fn offset(pc: usize, byte1: u8, byte2: u8) -> usize {
     //hack
     // Should work because of the two complement's representation of i16 and the wrapping add

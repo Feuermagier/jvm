@@ -18,7 +18,7 @@ pub struct MethodDescriptor {
     pub parameters: Vec<JvmType>,
     pub return_type: JvmType,
     pub visibility: Visibility,
-    pub code: Option<Vec<u8>>,
+    pub code: MethodCode,
     pub max_stack: usize,
     pub max_locals: usize,
 }
@@ -48,23 +48,23 @@ impl Parameters {
     }
 }
 
-/*
 pub enum MethodCode {
     Bytecode(Vec<u8>),
-    Native(Box<dyn Fn(Parameters) -> JvmValue>),
+    Native,
+    Abstract
 }
 
 impl Debug for MethodCode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Bytecode(arg0) => f.debug_tuple("Bytecode").field(arg0).finish(),
-            Self::Native(_) => f.debug_tuple("Native").finish(),
+            Self::Native => f.debug_tuple("Native").finish(),
+            Self::Abstract => f.debug_tuple("Abstract").finish(),
         }
     }
 }
-*/
 
-type MethodImplementation =
+pub type MethodImplementation =
     dyn Fn(&mut Heap, &ClassLibrary, &MethodTable, Option<HeapIndex>, Parameters) -> JvmValue;
 
 pub struct MethodTable {
