@@ -11,7 +11,7 @@ use super::{
     constant_pool::{ConstantPool, ConstantPoolIndex, FieldReference, MethodReference},
     field::{self, FieldDescriptor, FieldInfo, FieldLayout, Fields},
     heap::Heap,
-    method::{Method, MethodCode, MethodIndex, MethodTable, Parameters},
+    method::{MethodCode, MethodIndex, MethodTable, Parameters},
     types::JvmType,
     value::JvmValue,
 };
@@ -64,8 +64,10 @@ impl Class {
                     static_methods
                         .insert(desc.name.to_string(), (method_index, desc.parameters.len()));
                 }
-                MethodCode::Abstract => {panic!("Abstract static method")}
-                MethodCode::Native => {}   // TODO
+                MethodCode::Abstract => {
+                    panic!("Abstract static method")
+                }
+                MethodCode::Native => {} // TODO
             }
         }
 
@@ -79,7 +81,6 @@ impl Class {
         } else {
             Vec::new()
         };
-
         for desc in &data.methods {
             match &desc.code {
                 MethodCode::Bytecode(code) => {
@@ -104,7 +105,7 @@ impl Class {
                             ),
                         );
                     }
-                },
+                }
                 MethodCode::Abstract => {} // Abstract method, don't do anything
                 MethodCode::Native => {}   // TODO
             }

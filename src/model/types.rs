@@ -20,24 +20,7 @@ pub enum JvmType {
 }
 
 impl JvmType {
-    pub fn matches(self, other: &Self, classes: &ClassLibrary) -> bool {
-        match (self, other) {
-            (JvmType::Void, JvmType::Void) => true,
-            (JvmType::Byte, JvmType::Byte) => true,
-            (JvmType::Char, JvmType::Char) => true,
-            (JvmType::Integer, JvmType::Integer) => true,
-            (JvmType::Long, JvmType::Long) => true,
-            (JvmType::Float, JvmType::Float) => true,
-            (JvmType::Double, JvmType::Double) => true,
-            //(JvmType::Reference(a), JvmType::Reference(b)) => a.matches(b, classes),
-            (JvmType::Reference, JvmType::Reference) => true,
-            (JvmType::Short, JvmType::Short) => true,
-            (JvmType::Boolean, JvmType::Boolean) => true,
-            _ => false,
-        }
-    }
-
-    pub fn matches_ignoring_references(self, other: &Self) -> bool {
+    pub fn matches(self, other: &Self) -> bool {
         match (self, other) {
             (JvmType::Void, JvmType::Void) => true,
             (JvmType::Byte, JvmType::Byte) => true,
