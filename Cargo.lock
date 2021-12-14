@@ -41,22 +41,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "14c189c53d098945499cdfa7ecc63567cf3886b3332b312a5b4585d8d3a6a610"
 
 [[package]]
-name = "cafebabe"
-version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4734e4e2361180d7c1ab724db08983d3be55079e94b93a8d535fdece1b42798c"
-dependencies = [
- "bitflags",
- "cesu8",
-]
-
-[[package]]
-name = "cesu8"
-version = "1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d43a04d8753f35258c91f8ec639f792891f748a1edbd759cf1dcea3382ad83c"
-
-[[package]]
 name = "cfg-if"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -122,7 +106,6 @@ version = "0.1.0"
 dependencies = [
  "appendlist",
  "bitflags",
- "cafebabe",
  "dynasmrt",
  "env_logger",
  "log",

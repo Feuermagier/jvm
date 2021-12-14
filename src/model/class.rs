@@ -8,10 +8,10 @@ use crate::{
 
 use super::{
     class_library::{ClassIndex, ClassLibrary},
-    constant_pool::{ConstantPool, ConstantPoolIndex, FieldReference},
+    constant_pool::{ConstantPool, ConstantPoolIndex, FieldReference, MethodReference},
     field::{self, FieldDescriptor, FieldInfo, FieldLayout, Fields},
-    heap::{Heap, HeapIndex},
-    method::{Method, MethodDescriptor, Parameters},
+    heap::Heap,
+    method::{Method, MethodIndex, MethodTable, Parameters},
     types::JvmType,
     value::JvmValue,
 };
@@ -27,8 +27,9 @@ pub struct Class {
 
     field_layout: FieldLayout,
 
-    static_methods: HashMap<String, Method>,
-    methods: HashMap<String, Method>,
+    static_methods: HashMap<String, (MethodIndex, usize)>,
+    virtual_methods: HashMap<String, (MethodIndex, VirtualMethodIndex, usize)>, // The MethodIndex is used for static dispatch (i.e. invokespecial)
+    dispatch_table: Vec<MethodIndex>,
 }
 
 impl Class {
@@ -37,6 +38,7 @@ impl Class {
         constant_pool: ConstantPool,
         index: ClassIndex,
         super_class: Option<&Class>,
+        methods: &MethodTable,
     ) -> Result<Self, ClassCreationError> {
         let static_field_layout = field::layout_fields(&FieldLayout::empty(), &data.static_fields);
         let static_fields = Fields::init_from_layout(&static_field_layout);
@@ -48,16 +50,88 @@ impl Class {
             field::layout_fields(&FieldLayout::empty(), &data.fields)
         };
 
-        let static_methods = data
-            .static_methods
-            .iter()
-            .map(|method| (method.name.clone(), setup_method(method)))
-            .collect();
-        let methods = data
-            .methods
-            .iter()
-            .map(|method| (method.name.clone(), setup_method(method)))
-            .collect();
+        let mut static_methods = if let Some(super_class) = super_class {
+            super_class.static_methods.clone()
+        } else {
+            HashMap::new()
+        };
+        for desc in &data.static_methods {
+            if let Some(code) = &desc.code {
+                let name = desc.name.clone();
+                let code = code.clone();
+                let max_stack = desc.max_stack;
+                let max_locals = desc.max_locals;
+                let method_index = methods.add_method(Box::new(
+                    move |heap, classes, methods, this, parameters| {
+                        let method = Method {
+                            name: &name,
+                            code: &code,
+                            max_stack,
+                            max_locals,
+                        };
+                        interpreter::execute_method(
+                            method, parameters, index, this, classes, heap, methods,
+                        )
+                        .unwrap()
+                    },
+                ));
+                // Quite sure parameters.len() isn't correct: Parameter count should be in words (i.e. 4 bytes), but parameter_count will be e.g. 1 for a double
+                static_methods.insert(desc.name.to_string(), (method_index, desc.parameters.len()));
+            }
+        }
+
+        let mut virtual_methods = if let Some(super_class) = super_class {
+            super_class.virtual_methods.clone()
+        } else {
+            HashMap::new()
+        };
+        let mut dispatch_table = if let Some(super_class) = super_class {
+            super_class.dispatch_table.clone()
+        } else {
+            Vec::new()
+        };
+
+        for desc in &data.methods {
+            if let Some(code) = &desc.code {
+                let name = desc.name.clone();
+                let code = code.clone();
+                let max_stack = desc.max_stack;
+                let max_locals = desc.max_locals;
+                let method_index = methods.add_method(Box::new(
+                    move |heap, classes, methods, this, parameters| {
+                        let method = Method {
+                            name: &name,
+                            code: &code,
+                            max_stack,
+                            max_locals,
+                        };
+                        interpreter::execute_method(
+                            method, parameters, index, this, classes, heap, methods,
+                        )
+                        .unwrap()
+                    },
+                ));
+
+                if let Some((old_method_index, virtual_index, _)) =
+                    virtual_methods.get_mut(&desc.name)
+                {
+                    dispatch_table[virtual_index.0] = method_index;
+                    *old_method_index = method_index;
+                } else {
+                    let virtual_index = dispatch_table.len();
+                    dispatch_table.push(method_index);
+                    // Quite sure parameters.len() isn't correct: Parameter count should be in words (i.e. 4 bytes), but parameter_count will be e.g. 1 for a double
+                    virtual_methods.insert(
+                        desc.name.to_string(),
+                        (
+                            method_index,
+                            VirtualMethodIndex(virtual_index),
+                            desc.parameters.len(),
+                        ),
+                    );
+                }
+            }
+        }
 
         Ok(Self {
             index,
@@ -68,7 +142,8 @@ impl Class {
             static_fields: RefCell::new(static_fields),
             field_layout,
             static_methods,
-            methods,
+            virtual_methods,
+            dispatch_table,
         })
     }
 
@@ -76,10 +151,15 @@ impl Class {
         self.index = index;
     }
 
-    pub fn bootstrap(&self, classes: &ClassLibrary, heap: &mut Heap) -> Result<(), ExecutionError> {
-        if self.static_methods.contains_key("<clinit>") {
+    pub fn bootstrap(
+        &self,
+        methods: &MethodTable,
+        classes: &ClassLibrary,
+        heap: &mut Heap,
+    ) -> Result<(), ExecutionError> {
+        if let Some((clinit, _)) = self.static_methods.get("<clinit>") {
             let _return_value =
-                self.call_static_method("<clinit>", Parameters::empty(), classes, heap)?;
+                methods.resolve(*clinit)(heap, classes, methods, None, Parameters::empty());
         }
         Ok(())
     }
@@ -90,9 +170,9 @@ impl Class {
         index: ConstantPoolIndex,
         classes: &ClassLibrary,
         heap: &mut Heap,
+        methods: &MethodTable,
     ) -> Result<FieldInfo, FieldError> {
         match self.constant_pool.get(index)? {
-            //TODO use the class
             ConstantPoolEntry::FieldReference(reference) => match reference {
                 FieldReference::Resolved { info, .. } => Ok(*info),
                 FieldReference::Unresolved {
@@ -106,7 +186,7 @@ impl Class {
                     let callee_class_name = self
                         .constant_pool
                         .get_utf8(self.constant_pool.get_class(*class)?)?;
-                    let callee_class = classes.resolve_by_name(callee_class_name, heap);
+                    let callee_class = classes.resolve_by_name(callee_class_name, methods, heap);
 
                     let info = callee_class.field_layout.resolve(name)?;
 
@@ -127,6 +207,7 @@ impl Class {
         index: ConstantPoolIndex,
         classes: &ClassLibrary,
         heap: &mut Heap,
+        methods: &MethodTable,
     ) -> Result<(ClassIndex, FieldInfo), FieldError> {
         match self.constant_pool.get(index)? {
             //TODO use the class
@@ -145,7 +226,7 @@ impl Class {
                         .get_utf8(self.constant_pool.get_class(*class)?)?;
 
                     let (owning_class, info) = classes
-                        .resolve_by_name(callee_class_name, heap)
+                        .resolve_by_name(callee_class_name, methods, heap)
                         .resolve_own_static_field(name, classes)?;
 
                     self.constant_pool
@@ -176,6 +257,7 @@ impl Class {
         }
     }
 
+    /*
     pub fn resolve_method(
         &self,
         index: ConstantPoolIndex,
@@ -193,6 +275,125 @@ impl Class {
                 _ => Err(ConstantPoolError::MethodNotResolvable(index)),
             },
             _ => Err(ConstantPoolError::MethodNotResolvable(index)),
+        }
+    }
+    */
+
+    pub fn resolve_static_method(
+        &self,
+        index: ConstantPoolIndex,
+        classes: &ClassLibrary,
+        heap: &mut Heap,
+        methods: &MethodTable,
+    ) -> Result<(MethodIndex, usize), MethodError> {
+        match self.constant_pool.get_method(index)? {
+            MethodReference::ResolvedStatic {
+                index,
+                argument_count,
+            } => Ok((index, argument_count)),
+            MethodReference::Unresolved {
+                class,
+                name_and_type,
+            } => {
+                let (name, ty) = self.constant_pool.get_name_and_type(name_and_type)?;
+                let callee_class = self.constant_pool.resolve_type(class)?;
+                let name = self.constant_pool.get_utf8(name)?;
+
+                let method = classes
+                    .resolve_by_name(callee_class, methods, heap)
+                    .static_methods
+                    .get(name)
+                    .ok_or_else(|| MethodError::UnknownStatic(name.to_string()))?;
+
+                self.constant_pool
+                    .update_resolved_static_method(index, method.0, method.1);
+
+                Ok(*method)
+            }
+            _ => Err(MethodError::NotStatic(index)),
+        }
+    }
+
+    pub fn resolve_own_static_method_by_name(&self, name: &str) -> (MethodIndex, usize) {
+        *self.static_methods.get(name).unwrap()
+    }
+
+    pub fn resolve_virtual_method_statically(
+        &self,
+        index: ConstantPoolIndex,
+        classes: &ClassLibrary,
+        heap: &mut Heap,
+        methods: &MethodTable,
+    ) -> Result<(MethodIndex, usize), MethodError> {
+        match self.constant_pool.get_method(index)? {
+            MethodReference::ResolvedStatic {
+                index,
+                argument_count,
+            } => Ok((index, argument_count)),
+            MethodReference::Unresolved {
+                class,
+                name_and_type,
+            } => {
+                let (name, ty) = self.constant_pool.get_name_and_type(name_and_type)?;
+                let callee_class = self.constant_pool.resolve_type(class)?;
+                let name = self.constant_pool.get_utf8(name)?;
+
+                let (method_index, virtual_index, parameter_count) = *classes
+                    .resolve_by_name(callee_class, methods, heap)
+                    .virtual_methods
+                    .get(name)
+                    .ok_or_else(|| MethodError::UnknownStatic(name.to_string()))?;
+
+                self.constant_pool.update_resolved_virtual_method(
+                    index,
+                    method_index,
+                    virtual_index,
+                    parameter_count,
+                );
+
+                Ok((method_index, parameter_count))
+            }
+            _ => Err(MethodError::NotStatic(index)),
+        }
+    }
+
+    pub fn resolve_virtual_method(
+        &self,
+        index: ConstantPoolIndex,
+        classes: &ClassLibrary,
+        heap: &mut Heap,
+        methods: &MethodTable,
+    ) -> Result<(VirtualMethodIndex, usize), MethodError> {
+        match self.constant_pool.get_method(index)? {
+            MethodReference::ResolvedVirtual {
+                virtual_index,
+                argument_count,
+                ..
+            } => Ok((virtual_index, argument_count)),
+            MethodReference::Unresolved {
+                class,
+                name_and_type,
+            } => {
+                let (name, ty) = self.constant_pool.get_name_and_type(name_and_type)?;
+                let callee_class = self.constant_pool.resolve_type(class)?;
+                let name = self.constant_pool.get_utf8(name)?;
+
+                let (method_index, virtual_index, parameter_count) = *classes
+                    .resolve_by_name(callee_class, methods, heap)
+                    .virtual_methods
+                    .get(name)
+                    .ok_or_else(|| MethodError::UnknownVirtual(name.to_string()))?;
+
+                self.constant_pool.update_resolved_virtual_method(
+                    index,
+                    method_index,
+                    virtual_index,
+                    parameter_count,
+                );
+
+                Ok((virtual_index, parameter_count))
+            }
+            _ => Err(MethodError::NotVirtual(index)),
         }
     }
 
@@ -215,18 +416,7 @@ impl Class {
             .set_value(info.offset, value);
     }
 
-    pub fn get_static_method(&self, name: &str) -> Result<&'_ Method, MethodError> {
-        self.static_methods
-            .get(name)
-            .ok_or_else(|| MethodError::UnknownStaticMethod(name.to_string()))
-    }
-
-    pub fn get_method(&self, name: &str) -> Result<&'_ Method, MethodError> {
-        self.methods
-            .get(name)
-            .ok_or_else(|| MethodError::UnknownVirtualMethod(name.to_string()))
-    }
-
+    /*
     pub fn call_static_method(
         &self,
         name: &str,
@@ -244,7 +434,9 @@ impl Class {
             heap,
         )
     }
+    */
 
+    /*
     pub fn call_method(
         &self,
         name: &str,
@@ -255,14 +447,15 @@ impl Class {
     ) -> Result<JvmValue, ExecutionError> {
         // Resolve the method in super classes
         interpreter::execute_method(
-            self.get_method(name)?,
+            (*self.get_method(name)?).clone(),
             parameters,
-            self,
+            self.index(),
             Some(this),
             classes,
             heap,
         )
     }
+    */
 
     pub fn get_loadable(&self, index: ConstantPoolIndex) -> Result<JvmValue, ConstantPoolError> {
         let value = self.constant_pool.get(index)?;
@@ -315,7 +508,19 @@ impl Instance {
     pub fn class(&self) -> ClassIndex {
         self.class
     }
+
+    pub fn dispatch_virtual(
+        &self,
+        method: VirtualMethodIndex,
+        classes: &ClassLibrary,
+    ) -> MethodIndex {
+        classes.resolve(self.class).dispatch_table[method.0]
+    }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(transparent)]
+pub struct VirtualMethodIndex(usize);
 
 fn place_fields(descriptors: &Vec<FieldDescriptor>) -> (usize, HashMap<String, (usize, JvmType)>) {
     let count = descriptors.len();
@@ -330,25 +535,24 @@ fn place_fields(descriptors: &Vec<FieldDescriptor>) -> (usize, HashMap<String, (
     (offset, offset_map)
 }
 
-fn setup_method(descriptor: &MethodDescriptor) -> Method {
-    if descriptor.code.is_some() {
-        Method::new_bytecode_method(descriptor)
-    } else {
-        log::warn!(
-            "Native method '{}', binding a noop implementation",
-            &descriptor.name
-        );
-        Method::new_native_method(descriptor, Box::new(|_| JvmValue::Void))
-    }
-}
-
 #[derive(thiserror::Error, Debug)]
 pub enum MethodError {
-    #[error("Unknown instance method '#{0}'")]
-    UnknownVirtualMethod(String),
+    #[error("Unknown instance method '{0}'")]
+    UnknownVirtual(String),
 
-    #[error("Unknown static method '#{0}'")]
-    UnknownStaticMethod(String),
+    #[error(
+        "The method at constant pool index {0} was expected to be virtual, but is not virtual"
+    )]
+    NotVirtual(ConstantPoolIndex),
+
+    #[error("Unknown static method '{0}'")]
+    UnknownStatic(String),
+
+    #[error("The method at constant pool index {0} was expected to be static, but is not static")]
+    NotStatic(ConstantPoolIndex),
+
+    #[error(transparent)]
+    ConstantPool(#[from] ConstantPoolError),
 }
 
 #[derive(thiserror::Error, Debug)]

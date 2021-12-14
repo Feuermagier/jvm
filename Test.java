@@ -1,4 +1,13 @@
 public class Test {
-    public int x = 1;
-    public double y = 1.0;
+    static double a;
+    static int q;
+    
+    void foo() {
+        a = 2;
+        bar();
+    }
+    
+    private void bar() {
+        q = 5;
+    }
 }

@@ -5,16 +5,14 @@ pub mod interpreter;
 pub mod model;
 
 use core::slice;
-use std::{
-    io::{self, Write},
-};
+use std::io::{self, Write};
 
 use dynasmrt::{dynasm, DynasmApi, DynasmLabelApi};
 use model::method::Parameters;
 
 use crate::{
     class_loader::BootstrapClassLoader,
-    model::{class_library::ClassLibrary, heap::Heap},
+    model::{class_library::ClassLibrary, heap::Heap, method::MethodTable},
 };
 
 fn main() {
@@ -25,22 +23,28 @@ fn main() {
     let class_loader = BootstrapClassLoader::new();
     let classes = ClassLibrary::new(class_loader);
     let mut heap = Heap::new();
+    let methods = MethodTable::new();
 
-    classes.resolve_by_name("classes/Object", &mut heap);
+    classes.resolve_by_name("classes/Object", &methods, &mut heap);
 
-    let class = classes.resolve_by_name("Test2", &mut heap).index();
+    let class = classes
+        .resolve_by_name("Test2", &methods, &mut heap)
+        .index();
 
-    classes
+    let (main, _) = classes
         .resolve(class)
-        .call_static_method("main", Parameters::empty(), &classes, &mut heap)
-        .unwrap();
+        .resolve_own_static_method_by_name("main");
+    methods.resolve(main)(&mut heap, &classes, &methods, None, Parameters::empty());
 
     dbg!(&classes
-        .resolve_by_name("Test2", &mut heap)
+        .resolve_by_name("Test", &methods, &mut heap)
         .get_static_field_by_name("a", &classes));
     dbg!(&classes
-        .resolve_by_name("Test2", &mut heap)
-        .get_static_field_by_name("b", &classes));
+        .resolve_by_name("Test2", &methods, &mut heap)
+        .get_static_field_by_name("a", &classes));
+    dbg!(&classes
+        .resolve_by_name("Test2", &methods, &mut heap)
+        .get_static_field_by_name("q", &classes));
 
     /*
     let mut ops = dynasmrt::x64::Assembler::new().unwrap();

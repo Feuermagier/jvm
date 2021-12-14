@@ -1,6 +1,8 @@
 use std::fmt::Display;
 
-use super::{field::FieldInfo, class_library::ClassIndex};
+use super::{
+    class::VirtualMethodIndex, class_library::ClassIndex, field::FieldInfo, method::MethodIndex,
+};
 
 #[derive(Debug)]
 pub struct ConstantPool {
@@ -51,6 +53,17 @@ impl ConstantPool {
         }
     }
 
+    pub fn get_method(
+        &self,
+        index: ConstantPoolIndex,
+    ) -> Result<MethodReference, ConstantPoolError> {
+        let value = self.get(index)?;
+        match value {
+            ConstantPoolEntry::MethodReference(reference) => Ok(reference.clone()),
+            _ => Err(ConstantPoolError::MethodNotResolvable(index)),
+        }
+    }
+
     pub fn update_resolved_field(
         &self,
         index: ConstantPoolIndex,
@@ -67,13 +80,52 @@ impl ConstantPool {
         }
     }
 
+    pub fn update_resolved_static_method(
+        &self,
+        index: ConstantPoolIndex,
+        method: MethodIndex,
+        argument_count: usize,
+    ) {
+        let entry = &self.entries[(index.0 - 1) as usize];
+        let field = ConstantPoolEntry::MethodReference(MethodReference::ResolvedStatic {
+            index: method,
+            argument_count,
+        });
+
+        //Safety: This is a cache; nothing is changed here really and the cached value is constant
+        unsafe {
+            let entry = (entry as *const ConstantPoolEntry) as *mut ConstantPoolEntry;
+            *entry = field;
+        }
+    }
+
+    pub fn update_resolved_virtual_method(
+        &self,
+        index: ConstantPoolIndex,
+        method_index: MethodIndex,
+        virtual_index: VirtualMethodIndex,
+        argument_count: usize,
+    ) {
+        let entry = &self.entries[(index.0 - 1) as usize];
+        let field = ConstantPoolEntry::MethodReference(MethodReference::ResolvedVirtual {
+            method_index,
+            virtual_index,
+            argument_count,
+        });
+
+        //Safety: This is a cache; nothing is changed here really and the cached value is constant
+        unsafe {
+            let entry = (entry as *const ConstantPoolEntry) as *mut ConstantPoolEntry;
+            *entry = field;
+        }
+    }
+
     pub fn resolve_type(&self, index: ConstantPoolIndex) -> Result<&str, ConstantPoolError> {
         match self.get(index)? {
             ConstantPoolEntry::Class { name } => self.get_utf8(*name),
             _ => Err(ConstantPoolError::TypeNotResolvable(index)),
         }
     }
-
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -110,10 +162,7 @@ pub enum ConstantPoolEntry {
         name: ConstantPoolIndex,
     },
     FieldReference(FieldReference),
-    MethodReference {
-        class: ConstantPoolIndex,
-        name_and_type: ConstantPoolIndex,
-    },
+    MethodReference(MethodReference),
     InterfaceMethodReference {
         class: ConstantPoolIndex,
         name_and_type: ConstantPoolIndex,
@@ -140,6 +189,23 @@ pub enum FieldReference {
     Resolved {
         info: FieldInfo,
         class: ClassIndex,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub enum MethodReference {
+    Unresolved {
+        class: ConstantPoolIndex,
+        name_and_type: ConstantPoolIndex,
+    },
+    ResolvedStatic {
+        index: MethodIndex,
+        argument_count: usize,
+    },
+    ResolvedVirtual {
+        method_index: MethodIndex,
+        virtual_index: VirtualMethodIndex,
+        argument_count: usize,
     },
 }
 

@@ -5,7 +5,21 @@ use std::str::Utf8Error;
 
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::{class_parser::iterator::ClassFileIterator, model::{class_file::ClassFile, constant_pool::{ConstantPool, ConstantPoolEntry, ConstantPoolError, ConstantPoolIndex, FieldReference}, field::FieldDescriptor, method::{Method, MethodCode, MethodDescriptor}, types::JvmType, value::JvmValue, visibility::Visibility}};
+use crate::{
+    class_parser::iterator::ClassFileIterator,
+    model::{
+        class_file::ClassFile,
+        constant_pool::{
+            ConstantPool, ConstantPoolEntry, ConstantPoolError, ConstantPoolIndex, FieldReference,
+            MethodReference,
+        },
+        field::FieldDescriptor,
+        method::MethodDescriptor,
+        types::JvmType,
+        value::JvmValue,
+        visibility::Visibility,
+    },
+};
 
 pub fn parse(bytes: &[u8]) -> Result<(ClassFile, ClassData, ConstantPool), ParsingError> {
     let mut iter = ClassFileIterator::new(bytes);
@@ -108,16 +122,20 @@ fn parse_constants(iter: &mut ClassFileIterator) -> Result<ConstantPool, Parsing
             }),
 
             // CONSTANT_Fieldref
-            9 => constants.push(ConstantPoolEntry::FieldReference(FieldReference::Unresolved {
-                class: iter.u16()?.into(),
-                name_and_type: iter.u16()?.into(),
-            })),
+            9 => constants.push(ConstantPoolEntry::FieldReference(
+                FieldReference::Unresolved {
+                    class: iter.u16()?.into(),
+                    name_and_type: iter.u16()?.into(),
+                },
+            )),
 
             // CONSTANT_Methodref
-            10 => constants.push(ConstantPoolEntry::MethodReference {
-                class: iter.u16()?.into(),
-                name_and_type: iter.u16()?.into(),
-            }),
+            10 => constants.push(ConstantPoolEntry::MethodReference(
+                MethodReference::Unresolved {
+                    class: iter.u16()?.into(),
+                    name_and_type: iter.u16()?.into(),
+                },
+            )),
 
             // CONSTANT_InterfaceMethodref
             11 => constants.push(ConstantPoolEntry::InterfaceMethodReference {
