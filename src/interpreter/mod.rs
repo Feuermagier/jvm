@@ -8,7 +8,7 @@ use crate::{
         class_library::{ClassIndex, ClassLibrary},
         constant_pool::{ConstantPoolError, ConstantPoolIndex},
         heap::{Heap, HeapIndex},
-        method::{Method, MethodTable, Parameters, MethodDescriptor, MethodImplementation},
+        method::{MethodDescriptor, MethodImplementation, MethodIndex, MethodTable, Parameters},
         types::TypeError,
         value::{
             JvmDouble, JvmFloat, JvmInt, JvmLong, JvmReference, JvmValue, JVM_EQUAL, JVM_GREATER,
@@ -19,6 +19,7 @@ use crate::{
 
 use self::{locals::InterpreterLocals, stack::InterpreterStack};
 
+/*
 pub fn create_method(desc: &MethodDescriptor, code: &Vec<u8>, callee_class: ClassIndex) -> Box<MethodImplementation> {
     let name = desc.name.clone();
     let code = code.clone();
@@ -39,17 +40,30 @@ pub fn create_method(desc: &MethodDescriptor, code: &Vec<u8>, callee_class: Clas
         },
     )
 }
+*/
 
-pub fn execute_method(
-    method: Method,
-    parameters: Parameters,
-    callee_class: ClassIndex,
-    this: Option<HeapIndex>,
-    classes: &ClassLibrary,
+pub extern "C" fn interpret_method(
+    method_index: MethodIndex,
     heap: &mut Heap,
+    classes: &ClassLibrary,
     methods: &MethodTable,
+    this: Option<HeapIndex>,
+    parameters: Parameters,
+) -> JvmValue {
+    interpret(method_index, heap, classes, methods, this, parameters).unwrap()
+}
+
+fn interpret(
+    method_index: MethodIndex,
+    heap: &mut Heap,
+    classes: &ClassLibrary,
+    methods: &MethodTable,
+    this: Option<HeapIndex>,
+    parameters: Parameters,
 ) -> Result<JvmValue, ExecutionError> {
-    let callee_class = classes.resolve(callee_class);
+    let method = methods.get_data(method_index);
+
+    let callee_class = classes.resolve(method.owning_class);
     println!(
         "========= Entered method {0} of type {1}",
         &method.name,
@@ -801,6 +815,7 @@ pub fn execute_method(
                 let instance = stack.pop().as_reference().to_heap_index();
                 let parameters = stack.pop_parameters(parameter_count);
                 let return_value = methods.resolve(method_index)(
+                    method_index,
                     heap,
                     classes,
                     methods,
@@ -815,8 +830,14 @@ pub fn execute_method(
                 let (method_index, parameter_count) =
                     callee_class.resolve_static_method(cp_index, classes, heap, methods)?;
                 let parameters = stack.pop_parameters(parameter_count);
-                let return_value =
-                    methods.resolve(method_index)(heap, classes, methods, None, parameters);
+                let return_value = methods.resolve(method_index)(
+                    method_index,
+                    heap,
+                    classes,
+                    methods,
+                    None,
+                    parameters,
+                );
                 stack.push_value(return_value);
                 pc += 3;
             }
@@ -831,6 +852,7 @@ pub fn execute_method(
                     .resolve(instance)
                     .dispatch_virtual(virtual_index, classes);
                 let return_value = methods.resolve(method_index)(
+                    method_index,
                     heap,
                     classes,
                     methods,

@@ -34,7 +34,7 @@ fn main() {
     let (main, _) = classes
         .resolve(class)
         .resolve_own_static_method_by_name("main");
-    methods.resolve(main)(&mut heap, &classes, &methods, None, Parameters::empty());
+    methods.resolve(main)(main, &mut heap, &classes, &methods, None, Parameters::empty());
 
     dbg!(&classes
         .resolve_by_name("Test", &methods, &mut heap)

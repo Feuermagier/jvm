@@ -11,7 +11,7 @@ use super::{
     constant_pool::{ConstantPool, ConstantPoolIndex, FieldReference, MethodReference},
     field::{self, FieldDescriptor, FieldInfo, FieldLayout, Fields},
     heap::Heap,
-    method::{MethodCode, MethodIndex, MethodTable, Parameters},
+    method::{MethodCode, MethodData, MethodIndex, MethodTable, Parameters},
     types::JvmType,
     value::JvmValue,
 };
@@ -58,8 +58,16 @@ impl Class {
         for desc in &data.static_methods {
             match &desc.code {
                 MethodCode::Bytecode(code) => {
-                    let method_index =
-                        methods.add_method(interpreter::create_method(desc, code, index));
+                    let method_index = methods.add_method(
+                        Box::new(interpreter::interpret_method.clone()),
+                        MethodData {
+                            name: desc.name.clone(),
+                            code: code.clone(),
+                            max_stack: desc.max_stack,
+                            max_locals: desc.max_locals,
+                            owning_class: index,
+                        },
+                    );
                     // Quite sure parameters.len() isn't correct: Parameter count should be in words (i.e. 4 bytes), but parameter_count will be e.g. 1 for a double
                     static_methods
                         .insert(desc.name.to_string(), (method_index, desc.parameters.len()));
@@ -84,8 +92,16 @@ impl Class {
         for desc in &data.methods {
             match &desc.code {
                 MethodCode::Bytecode(code) => {
-                    let method_index =
-                        methods.add_method(interpreter::create_method(desc, code, index));
+                    let method_index = methods.add_method(
+                        Box::new(interpreter::interpret_method.clone()),
+                        MethodData {
+                            name: desc.name.clone(),
+                            code: code.clone(),
+                            max_stack: desc.max_stack,
+                            max_locals: desc.max_locals,
+                            owning_class: index,
+                        },
+                    );
 
                     if let Some((old_method_index, virtual_index, _)) =
                         virtual_methods.get_mut(&desc.name)
@@ -136,13 +152,18 @@ impl Class {
         heap: &mut Heap,
     ) -> Result<(), ExecutionError> {
         if let Some((clinit, _)) = self.static_methods.get("<clinit>") {
-            let _return_value =
-                methods.resolve(*clinit)(heap, classes, methods, None, Parameters::empty());
+            let _return_value = methods.resolve(*clinit)(
+                *clinit,
+                heap,
+                classes,
+                methods,
+                None,
+                Parameters::empty(),
+            );
         }
         Ok(())
     }
 
-    //todo: This will definitely not work for shadowed fields
     pub fn resolve_instance_field(
         &self,
         index: ConstantPoolIndex,
@@ -234,28 +255,6 @@ impl Class {
             Err(FieldError::StaticFieldNotFound(name.to_string()))
         }
     }
-
-    /*
-    pub fn resolve_method(
-        &self,
-        index: ConstantPoolIndex,
-    ) -> Result<(&str, &str, &str), ConstantPoolError> {
-        match self.constant_pool.get(index)? {
-            ConstantPoolEntry::MethodReference {
-                class,
-                name_and_type,
-            } => match self.constant_pool.get(*name_and_type)? {
-                ConstantPoolEntry::NameAndType { name, ty } => Ok((
-                    self.constant_pool.resolve_type(*class)?,
-                    self.constant_pool.get_utf8(*name)?,
-                    self.constant_pool.get_utf8(*ty)?,
-                )),
-                _ => Err(ConstantPoolError::MethodNotResolvable(index)),
-            },
-            _ => Err(ConstantPoolError::MethodNotResolvable(index)),
-        }
-    }
-    */
 
     pub fn resolve_static_method(
         &self,

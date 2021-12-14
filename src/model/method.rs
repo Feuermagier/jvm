@@ -5,7 +5,7 @@ use appendlist::AppendList;
 use crate::interpreter::stack::StackValue;
 
 use super::{
-    class_library::ClassLibrary,
+    class_library::{ClassLibrary, ClassIndex},
     heap::{Heap, HeapIndex},
     types::JvmType,
     value::JvmValue,
@@ -23,6 +23,7 @@ pub struct MethodDescriptor {
     pub max_locals: usize,
 }
 
+/*
 #[derive(Debug, Clone)]
 pub struct Method<'m> {
     pub name: &'m String,
@@ -30,6 +31,7 @@ pub struct Method<'m> {
     pub max_stack: usize,
     pub max_locals: usize,
 }
+*/
 
 #[derive(Debug)]
 pub struct Parameters(Vec<StackValue>);
@@ -65,10 +67,10 @@ impl Debug for MethodCode {
 }
 
 pub type MethodImplementation =
-    dyn Fn(&mut Heap, &ClassLibrary, &MethodTable, Option<HeapIndex>, Parameters) -> JvmValue;
+    extern "C" fn(MethodIndex, &mut Heap, &ClassLibrary, &MethodTable, Option<HeapIndex>, Parameters) -> JvmValue;
 
 pub struct MethodTable {
-    methods: AppendList<Box<MethodImplementation>>,
+    methods: AppendList<MethodEntry>,
 }
 
 impl MethodTable {
@@ -78,15 +80,34 @@ impl MethodTable {
         }
     }
 
-    pub fn add_method(&self, method: Box<MethodImplementation>) -> MethodIndex {
-        self.methods.push(method);
+    pub fn add_method(&self, implementation: Box<MethodImplementation>, data: MethodData) -> MethodIndex {
+        self.methods.push(MethodEntry { implementation, data });
         MethodIndex(self.methods.len() - 1)
     }
 
     pub fn resolve(&self, method_index: MethodIndex) -> &MethodImplementation {
-        &self.methods[method_index.0]
+        &self.methods[method_index.0].implementation
+    }
+
+    pub fn get_data(&self, method_index: MethodIndex) -> &MethodData {
+        &self.methods[method_index.0].data
     }
 }
+
+#[repr(C)]
+pub struct MethodEntry {
+    pub implementation: Box<MethodImplementation>,
+    pub data: MethodData
+}
+
+pub struct MethodData {
+    pub name: String,
+    pub code: Vec<u8>,
+    pub max_stack: usize,
+    pub max_locals: usize,
+    pub owning_class: ClassIndex
+}
+
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(transparent)]
