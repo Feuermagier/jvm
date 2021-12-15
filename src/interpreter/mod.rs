@@ -19,30 +19,7 @@ use crate::{
 
 use self::{locals::InterpreterLocals, stack::InterpreterStack};
 
-/*
-pub fn create_method(desc: &MethodDescriptor, code: &Vec<u8>, callee_class: ClassIndex) -> Box<MethodImplementation> {
-    let name = desc.name.clone();
-    let code = code.clone();
-    let max_stack = desc.max_stack;
-    let max_locals = desc.max_locals;
-    Box::new(
-        move |heap, classes, methods, this, parameters| {
-            let method = Method {
-                name: &name,
-                code: &code,
-                max_stack,
-                max_locals,
-            };
-            execute_method(
-                method, parameters, callee_class, this, classes, heap, methods,
-            )
-            .unwrap()
-        },
-    )
-}
-*/
-
-pub extern "win64" fn interpret_method(
+pub extern "sysv64" fn interpret_method(
     method_index: MethodIndex,
     heap: &mut Heap,
     classes: &ClassLibrary,

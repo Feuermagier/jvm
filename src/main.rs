@@ -3,6 +3,7 @@ pub mod class_loader;
 pub mod class_parser;
 pub mod interpreter;
 pub mod model;
+pub mod jit;
 
 use dynasmrt::{dynasm, DynasmApi, DynasmLabelApi};
 use model::method::Parameters;
@@ -20,7 +21,6 @@ struct Test {
 }
 
 fn main() {
-
     let test = Test {
         a: 13,
         b: 42.0,
@@ -36,24 +36,41 @@ fn main() {
     let hello = ops.offset();
     dynasm!(ops
         ; .arch x64
-        ; lea rcx, [->test]
-        ; add rcx, BYTE bytemuck::offset_of!(test, Test, a) as i8
-        ; mov rcx, [rcx]
-        ; lea rdx, [->test]
-        ; add rdx, BYTE bytemuck::offset_of!(test, Test, b) as i8
-        ; movq xmm1, QWORD [rdx]
+//        ; push rbp
+//        ; mov rbp, rsp
+        ; mov rsi, QWORD [rsp + 8]
+        ; lea rdi, [->test]
+        ; add rdi, BYTE bytemuck::offset_of!(test, Test, a) as i8
+        ; mov rdi, QWORD [rdi]
         ; mov rax, QWORD print as _
-        ; sub rsp, BYTE 0x28
         ; call rax
-        ; add rsp, BYTE 0x28
+//        ; pop rbp
         ; ret
     );
 
     let buf = ops.finalize().unwrap();
 
-    let hello_fn: extern "win64" fn() = unsafe { std::mem::transmute(buf.ptr(hello)) };
+    let hello_fn: extern "sysv64" fn() = unsafe { std::mem::transmute(buf.ptr(hello)) };
+    let hello_fn = Box::new(hello_fn);
 
-    hello_fn();
+    let mut ops = dynasmrt::x64::Assembler::new().unwrap();
+    let caller = ops.offset();
+
+    dynasm!(ops
+        ; .arch x64
+        ; sub rsp, 16
+        ; mov rax, QWORD -1
+        ; mov QWORD [rsp], rax
+//        ; push rax
+        ; mov rax, QWORD *hello_fn as _
+        ; call rax
+        ; add rsp, 16
+        ; ret
+    );
+
+    let caller_buf = ops.finalize().unwrap();
+    let caller_fn: extern "sysv64" fn() = unsafe { std::mem::transmute(caller_buf.ptr(caller))};
+    caller_fn();
 
     return;
 
@@ -118,6 +135,6 @@ fn main() {
     */
 }
 
-pub extern "win64" fn print(a: u32, b: f64) {
+pub extern "sysv64" fn print(a: u64, b: i64) {
     println!("a: {}, b: {}", a, b);
 }

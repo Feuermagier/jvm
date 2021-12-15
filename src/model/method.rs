@@ -67,7 +67,7 @@ impl Debug for MethodCode {
 }
 
 pub type MethodImplementation =
-    extern "win64" fn(MethodIndex, &mut Heap, &ClassLibrary, &MethodTable, Option<HeapIndex>, Parameters) -> JvmValue;
+    extern "sysv64" fn(MethodIndex, &mut Heap, &ClassLibrary, &MethodTable, Option<HeapIndex>, Parameters) -> JvmValue;
 
 pub struct MethodTable {
     methods: AppendList<MethodEntry>,
@@ -82,15 +82,15 @@ impl MethodTable {
 
     pub fn add_method(&self, implementation: Box<MethodImplementation>, data: MethodData) -> MethodIndex {
         self.methods.push(MethodEntry { implementation, data });
-        MethodIndex(self.methods.len() - 1)
+        (self.methods.len() - 1).into()
     }
 
     pub fn resolve(&self, method_index: MethodIndex) -> &MethodImplementation {
-        &self.methods[method_index.0].implementation
+        &self.methods[method_index.into()].implementation
     }
 
     pub fn get_data(&self, method_index: MethodIndex) -> &MethodData {
-        &self.methods[method_index.0].data
+        &self.methods[method_index.into()].data
     }
 }
 
@@ -111,4 +111,16 @@ pub struct MethodData {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(transparent)]
-pub struct MethodIndex(usize);
+pub struct MethodIndex(u64);
+
+impl From<MethodIndex> for usize {
+    fn from(index: MethodIndex) -> Self {
+        index.0 as usize
+    }
+}
+
+impl From<usize> for MethodIndex {
+    fn from(index: usize) -> Self {
+        MethodIndex(index as u64)
+    }
+}
