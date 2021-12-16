@@ -58,7 +58,7 @@ fn main() {
 
     dynasm!(ops
         ; .arch x64
-        ; sub rsp, 16
+        ; sub rsp, 16 // Stack must be aligned at 16 byte boundaries
         ; mov rax, QWORD -1
         ; mov QWORD [rsp], rax
 //        ; push rax
