@@ -246,6 +246,7 @@ fn interpret(
             }
 
             // + array loads
+            //TODO stores for double/long shoud use two slots
             bytecode::ISTORE
             | bytecode::LSTORE
             | bytecode::FSTORE
