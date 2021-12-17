@@ -31,7 +31,7 @@ fn main() {
     let classes = ClassLibrary::new(class_loader);
     let mut heap = Heap::new();
     let methods = MethodTable::new(100);
-    let stack = StackPointer::with_size(10000);
+    let stack = StackPointer::with_size(20000);
 
     classes.resolve_by_name("classes/Object", &methods, &mut heap, stack);
 
@@ -44,7 +44,7 @@ fn main() {
 
     dbg!(&classes
         .resolve_by_name("Test", &methods, &mut heap, stack)
-        .get_static_field_by_name("a", &classes).unwrap().int());
+        .get_static_field_by_name("a", &classes).unwrap().long());
 
     /*
     let mut ops = dynasmrt::x64::Assembler::new().unwrap();

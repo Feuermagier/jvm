@@ -58,22 +58,15 @@ impl Class {
         };
         for desc in &data.static_methods {
             match &desc.code {
-                MethodCode::Bytecode(code) => {
+                MethodCode::Bytecode(_) => {
                     let method_index = methods.add_method(
                         MethodImplementation::Interpreted,
-                        MethodData {
-                            name: desc.name.clone(),
-                            code: code.clone(),
-                            max_stack: desc.max_stack,
-                            max_locals: desc.max_locals,
-                            owning_class: index,
-                            argument_count: desc.parameters.len(),
-                            return_type: desc.return_type,
-                        },
+                        MethodData::from_bytecode_descriptor(desc, index).unwrap(),
                     );
-                    // Quite sure parameters.len() isn't correct: Parameter count should be in words (i.e. 4 bytes), but parameter_count will be e.g. 1 for a double
-                    static_methods
-                        .insert(desc.name.to_string(), (method_index, desc.parameters.len()));
+                    static_methods.insert(
+                        desc.name.to_string(),
+                        (method_index, desc.parameter_count()),
+                    );
                 }
                 MethodCode::Abstract => {
                     panic!("Abstract static method")
@@ -94,18 +87,10 @@ impl Class {
         };
         for desc in &data.methods {
             match &desc.code {
-                MethodCode::Bytecode(code) => {
+                MethodCode::Bytecode(_) => {
                     let method_index = methods.add_method(
                         MethodImplementation::Interpreted,
-                        MethodData {
-                            name: desc.name.clone(),
-                            code: code.clone(),
-                            max_stack: desc.max_stack,
-                            max_locals: desc.max_locals,
-                            owning_class: index,
-                            argument_count: desc.parameters.len(),
-                            return_type: desc.return_type,
-                        },
+                        MethodData::from_bytecode_descriptor(desc, index).unwrap(),
                     );
 
                     if let Some((old_method_index, virtual_index, _)) =
@@ -116,13 +101,12 @@ impl Class {
                     } else {
                         let virtual_index = dispatch_table.len();
                         dispatch_table.push(method_index);
-                        // Quite sure parameters.len() isn't correct: Parameter count should be in words (i.e. 4 bytes), but parameter_count will be e.g. 1 for a double
                         virtual_methods.insert(
                             desc.name.to_string(),
                             (
                                 method_index,
                                 VirtualMethodIndex(virtual_index),
-                                desc.parameters.len(),
+                                desc.parameter_count(),
                             ),
                         );
                     }

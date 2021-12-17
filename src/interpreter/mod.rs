@@ -39,24 +39,6 @@ extern "sysv64" {
     pub fn interpreter_trampoline();
 }
 
-global_asm!(
-    ".global foo",
-    "foo:",
-    "sub rsp, 8", // Stack alignment (8B return address to caller of interpreter_trampoline; 16B required => 8B padding)
-    "call print",
-    "add rsp, 8",
-    "ret"
-);
-
-extern "sysv64" {
-    pub fn foo();
-}
-
-#[no_mangle]
-pub extern "sysv64" fn print() {
-    println!("Boing");
-}
-
 pub extern "sysv64" fn call_method(
     method_index: MethodIndex,
     stack: StackPointer,
@@ -190,7 +172,9 @@ fn interpret(
             }
 
             bytecode::BIPUSH => {
-                stack.push(StackValue::from_int(JvmInt(i8::from_be_bytes([code[pc + 1]]) as i32)));
+                stack.push(StackValue::from_int(JvmInt(
+                    i8::from_be_bytes([code[pc + 1]]) as i32,
+                )));
                 pc += 2;
             }
             bytecode::SIPUSH => {
@@ -216,47 +200,48 @@ fn interpret(
             }
 
             // TODO local variable access for longs / doubles is most likely not working
-            bytecode::ILOAD
-            | bytecode::LLOAD
-            | bytecode::FLOAD
-            | bytecode::DLOAD
-            | bytecode::ALOAD => {
+            bytecode::ILOAD | bytecode::FLOAD | bytecode::ALOAD => {
                 let index = code[pc + 1];
                 stack.push(stack.get_local(index as usize));
                 pc += 2;
             }
 
-            // + ALOAD
-            bytecode::ILOAD_0
-            | bytecode::LLOAD_0
-            | bytecode::FLOAD_0
-            | bytecode::DLOAD_0
-            | bytecode::ALOAD_0 => {
+            bytecode::LLOAD | bytecode::DLOAD => {
+                let index = code[pc + 1] as usize;
+                stack.push_wide((stack.get_local(index), stack.get_local(index + 1)));
+                pc += 1;
+            }
+
+            bytecode::ILOAD_0 | bytecode::FLOAD_0 | bytecode::ALOAD_0 => {
                 stack.push(stack.get_local(0));
                 pc += 1;
             }
-            bytecode::ILOAD_1
-            | bytecode::LLOAD_1
-            | bytecode::FLOAD_1
-            | bytecode::DLOAD_1
-            | bytecode::ALOAD_1 => {
+            bytecode::LLOAD_0 | bytecode::DLOAD_0 => {
+                stack.push_wide((stack.get_local(0), stack.get_local(1)));
+                pc += 1;
+            }
+            bytecode::ILOAD_1 | bytecode::FLOAD_1 | bytecode::ALOAD_1 => {
                 stack.push(stack.get_local(1));
                 pc += 1;
             }
-            bytecode::ILOAD_2
-            | bytecode::LLOAD_2
-            | bytecode::FLOAD_2
-            | bytecode::DLOAD_2
-            | bytecode::ALOAD_2 => {
+            bytecode::LLOAD_1 | bytecode::DLOAD_1 => {
+                stack.push_wide((stack.get_local(1), stack.get_local(2)));
+                pc += 1;
+            }
+            bytecode::ILOAD_2 | bytecode::FLOAD_2 | bytecode::ALOAD_2 => {
                 stack.push(stack.get_local(2));
                 pc += 1;
             }
-            bytecode::ILOAD_3
-            | bytecode::LLOAD_3
-            | bytecode::FLOAD_3
-            | bytecode::DLOAD_3
-            | bytecode::ALOAD_3 => {
+            bytecode::LLOAD_2 | bytecode::DLOAD_2 => {
+                stack.push_wide((stack.get_local(2), stack.get_local(3)));
+                pc += 1;
+            }
+            bytecode::ILOAD_3 | bytecode::FLOAD_3 | bytecode::ALOAD_3 => {
                 stack.push(stack.get_local(3));
+                pc += 1;
+            }
+            bytecode::LLOAD_3 | bytecode::DLOAD_3 => {
+                stack.push_wide((stack.get_local(3), stack.get_local(4)));
                 pc += 1;
             }
 

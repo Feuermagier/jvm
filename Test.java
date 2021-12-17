@@ -1,11 +1,11 @@
 public class Test {
-    static int a;
+    static long a;
 	public static void main() {
         foo(5);
-        foo(10000);
+        foo(Long.MAX_VALUE);
     }
     
-    static void foo(int x) {
+    static void foo(long x) {
         a = x;
     }
 }

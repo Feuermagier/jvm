@@ -25,6 +25,12 @@ pub struct MethodDescriptor {
     pub max_locals: usize,
 }
 
+impl MethodDescriptor {
+    pub fn parameter_count(&self) -> usize {
+        self.parameters.iter().map(|p| p.size()).sum::<usize>() / 4
+    }
+}
+
 pub enum MethodCode {
     Bytecode(Vec<u8>),
     Native,
@@ -119,6 +125,27 @@ pub struct MethodData {
     pub owning_class: ClassIndex,
     pub argument_count: usize,
     pub return_type: JvmType,
+}
+
+impl MethodData {
+    pub fn from_bytecode_descriptor(
+        desc: &MethodDescriptor,
+        owning_class: ClassIndex,
+    ) -> Option<Self> {
+        if let MethodCode::Bytecode(code) = &desc.code {
+            Some(Self {
+                name: desc.name.clone(),
+                code: code.clone(),
+                max_stack: desc.max_stack,
+                max_locals: desc.max_locals,
+                owning_class,
+                argument_count: desc.parameter_count(),
+                return_type: desc.return_type,
+            })
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

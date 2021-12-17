@@ -10,7 +10,7 @@ pub struct StackPointer(*mut u32);
 impl StackPointer {
     pub fn with_size(slots: usize) -> Self {
         let layout = Layout::from_size_align(slots * 4, 4).unwrap();
-        let stack = unsafe { (std::alloc::alloc(layout) as *mut u32).offset(1) };
+        let stack = unsafe { (std::alloc::alloc(layout) as *mut u32) };
 
         Self(stack)
     }
