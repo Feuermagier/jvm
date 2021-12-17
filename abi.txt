@@ -1,0 +1,7 @@
+rdi: method_index
+rsi: java stack pointer
+rdx: heap reference
+rcx: class library reference
+r8: method table reference
+
+rax: return value

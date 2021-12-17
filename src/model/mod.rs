@@ -8,3 +8,4 @@ pub mod types;
 pub mod heap;
 pub mod constant_pool;
 pub mod class_library;
+pub mod stack;

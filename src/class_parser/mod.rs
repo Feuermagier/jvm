@@ -185,10 +185,10 @@ fn parse_fields(
                     let value_index = iter.u16()?;
                     let constant = constant_pool.get(value_index.into())?;
                     let value = match constant {
-                        ConstantPoolEntry::Integer(value) => JvmValue::Int((*value).into()),
-                        ConstantPoolEntry::Long(value) => JvmValue::Long((*value).into()),
-                        ConstantPoolEntry::Float(value) => JvmValue::Float((*value).into()),
-                        ConstantPoolEntry::Double(value) => JvmValue::Double((*value).into()),
+                        ConstantPoolEntry::Integer(value) => JvmValue { int: *value },
+                        ConstantPoolEntry::Long(value) => JvmValue { long: *value },
+                        ConstantPoolEntry::Float(value) => JvmValue { float: *value },
+                        ConstantPoolEntry::Double(value) => JvmValue { double: *value },
                         //TODO parse strings
                         _ => {
                             return Err(ParsingError::InvalidConstantValue(format!(

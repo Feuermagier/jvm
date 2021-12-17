@@ -1,12 +1,14 @@
 use core::fmt::Debug;
+use std::alloc::Layout;
 
 use appendlist::AppendList;
 
-use crate::interpreter::stack::StackValue;
+use crate::interpreter::{self};
 
 use super::{
-    class_library::{ClassLibrary, ClassIndex},
-    heap::{Heap, HeapIndex},
+    class_library::{ClassIndex, ClassLibrary},
+    heap::Heap,
+    stack::StackPointer,
     types::JvmType,
     value::JvmValue,
     visibility::Visibility,
@@ -23,37 +25,10 @@ pub struct MethodDescriptor {
     pub max_locals: usize,
 }
 
-/*
-#[derive(Debug, Clone)]
-pub struct Method<'m> {
-    pub name: &'m String,
-    pub code: &'m Vec<u8>,
-    pub max_stack: usize,
-    pub max_locals: usize,
-}
-*/
-
-#[derive(Debug)]
-pub struct Parameters(Vec<StackValue>);
-
-impl Parameters {
-    pub fn of(values: Vec<StackValue>) -> Self {
-        Self(values)
-    }
-
-    pub fn empty() -> Self {
-        Self(Vec::new())
-    }
-
-    pub fn to_vec(self) -> Vec<StackValue> {
-        self.0
-    }
-}
-
 pub enum MethodCode {
     Bytecode(Vec<u8>),
     Native,
-    Abstract
+    Abstract,
 }
 
 impl Debug for MethodCode {
@@ -66,38 +41,74 @@ impl Debug for MethodCode {
     }
 }
 
-pub type MethodImplementation =
-    extern "sysv64" fn(MethodIndex, &mut Heap, &ClassLibrary, &MethodTable, Option<HeapIndex>, Parameters) -> JvmValue;
+pub enum MethodImplementation {
+    Native(
+        Box<
+            extern "sysv64" fn(
+                MethodIndex,
+                StackPointer,
+                *mut Heap,
+                *const ClassLibrary,
+                *const MethodTable,
+            ) -> JvmValue,
+        >,
+    ),
+    Interpreted,
+}
 
+#[repr(C)]
 pub struct MethodTable {
+    call_table: *mut u64,
     methods: AppendList<MethodEntry>,
 }
 
 impl MethodTable {
-    pub fn new() -> Self {
+    pub fn new(capacity: usize) -> Self {
+        let call_table_layout = Layout::from_size_align(capacity, 8).unwrap();
+        let call_table = unsafe { std::alloc::alloc(call_table_layout) as *mut u64 };
         Self {
+            call_table,
             methods: AppendList::new(),
         }
     }
 
-    pub fn add_method(&self, implementation: Box<MethodImplementation>, data: MethodData) -> MethodIndex {
-        self.methods.push(MethodEntry { implementation, data });
+    pub fn add_method(
+        &self,
+        implementation: MethodImplementation,
+        data: MethodData,
+    ) -> MethodIndex {
+        let index = self.methods.len();
+        let ptr = match &implementation {
+            MethodImplementation::Native(code) => **code as u64,
+            MethodImplementation::Interpreted => interpreter::interpreter_trampoline as u64,
+        };
+        unsafe {
+            *self.call_table.offset(index as isize) = ptr;
+        }
+        self.methods.push(MethodEntry {
+            implementation,
+            data,
+        });
         (self.methods.len() - 1).into()
     }
 
-    pub fn resolve(&self, method_index: MethodIndex) -> &MethodImplementation {
-        &self.methods[method_index.into()].implementation
+    pub unsafe fn resolve(&self, method_index: MethodIndex) -> u64 {
+        *self.call_table.offset(method_index.0 as isize)
     }
 
     pub fn get_data(&self, method_index: MethodIndex) -> &MethodData {
         &self.methods[method_index.into()].data
     }
+
+    pub fn method_count(&self) -> usize {
+        self.methods.len()
+    }
 }
 
 #[repr(C)]
 pub struct MethodEntry {
-    pub implementation: Box<MethodImplementation>,
-    pub data: MethodData
+    pub implementation: MethodImplementation,
+    pub data: MethodData,
 }
 
 pub struct MethodData {
@@ -105,13 +116,24 @@ pub struct MethodData {
     pub code: Vec<u8>,
     pub max_stack: usize,
     pub max_locals: usize,
-    pub owning_class: ClassIndex
+    pub owning_class: ClassIndex,
+    pub argument_count: usize,
+    pub return_type: JvmType,
 }
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(transparent)]
 pub struct MethodIndex(u64);
+
+impl MethodIndex {
+    pub unsafe fn into_raw(self) -> u64 {
+        self.0
+    }
+
+    pub unsafe fn from_raw(value: u64) -> Self {
+        Self(value)
+    }
+}
 
 impl From<MethodIndex> for usize {
     fn from(index: MethodIndex) -> Self {

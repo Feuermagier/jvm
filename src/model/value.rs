@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::fmt::{self, Display};
 
 use super::heap::HeapIndex;
 
@@ -84,48 +84,87 @@ impl From<JvmDouble> for f64 {
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 #[repr(transparent)]
-pub struct JvmReference(pub u16);
+pub struct JvmReference(pub HeapIndex);
 
 impl JvmReference {
     pub fn to_heap_index(self) -> HeapIndex {
-        HeapIndex::from_u16(self.0)
+        self.0
     }
 
     pub fn from_heap_index(index: HeapIndex) -> Self {
-        Self(index.as_u16())
+        Self(index)
     }
 }
 
 impl From<u16> for JvmReference {
     fn from(value: u16) -> Self {
-        Self(value)
+        Self(HeapIndex::from_u16(value))
     }
 }
 
 impl From<JvmReference> for u16 {
     fn from(value: JvmReference) -> Self {
-        value.0
+        value.0.as_u16()
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum JvmValue {
-    Void,
-    Int(JvmInt),
-    Long(JvmLong),
-    Float(JvmFloat),
-    Double(JvmDouble),
-    Reference(JvmReference),
+#[derive(Clone, Copy)]
+#[repr(C)]
+pub union JvmValue {
+    pub void: i64,
+    pub int: i32,
+    pub long: i64,
+    pub float: f32,
+    pub double: f64,
+    pub reference: HeapIndex,
+}
+
+impl JvmValue {
+    pub const VOID: JvmValue = JvmValue { void: 0 };
+
+    pub fn int(self) -> JvmInt {
+        unsafe { JvmInt(self.int) }
+    }
+
+    pub fn long(self) -> JvmLong {
+        unsafe { JvmLong(self.long) }
+    }
+
+    pub fn float(self) -> JvmFloat {
+        unsafe { JvmFloat(self.float) }
+    }
+
+    pub fn double(self) -> JvmDouble {
+        unsafe { JvmDouble(self.double) }
+    }
+
+    pub fn reference(self) -> JvmReference {
+        unsafe { JvmReference(self.reference) }
+    }
+
+    pub unsafe fn from_native(value: i64) -> Self {
+        Self { void: value }
+    }
+
+    pub unsafe fn to_native(self) -> i64 {
+        self.void
+    }
 }
 
 impl Default for JvmValue {
     fn default() -> Self {
-        Self::Void
+        JvmValue::VOID
+    }
+}
+
+impl fmt::Debug for JvmValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        unsafe { write!(f, "{:#b}", self.void) }
     }
 }
 
 impl Display for JvmValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
+        unsafe { write!(f, "{:#b}", self.void) }
     }
 }

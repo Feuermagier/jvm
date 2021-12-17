@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use crate::model::value::JvmValue;
 
 use super::{
+    heap::HeapIndex,
     types::JvmType,
     value::{JvmDouble, JvmFloat, JvmInt, JvmLong, JvmReference},
     visibility::Visibility,
@@ -122,62 +123,82 @@ pub struct Fields {
 impl Fields {
     pub fn init_from_layout(layout: &FieldLayout) -> Self {
         let mut fields = Self {
-            fields:vec![0; layout.length],
+            fields: vec![0; layout.length],
         };
 
+        // todo
+        /*
         for (offset, _, constant_value) in layout.fields.values() {
             if let Some(value) = constant_value {
                 fields.set_value(*offset, *value);
             }
         }
+        */
         fields
     }
 
-    pub fn set_value(&mut self, offset: usize, value: JvmValue) {
-        match value {
-            JvmValue::Int(value) => {
-                let bytes = value.0.to_be_bytes();
-                self.fields[offset + 0] = bytes[0];
-                self.fields[offset + 1] = bytes[1];
-                self.fields[offset + 2] = bytes[2];
-                self.fields[offset + 3] = bytes[3];
-            }
-            JvmValue::Double(value) => {
-                let bytes = value.0.to_be_bytes();
-                self.fields[offset + 0] = bytes[0];
-                self.fields[offset + 1] = bytes[1];
-                self.fields[offset + 2] = bytes[2];
-                self.fields[offset + 3] = bytes[3];
-                self.fields[offset + 4] = bytes[4];
-                self.fields[offset + 5] = bytes[5];
-                self.fields[offset + 6] = bytes[6];
-                self.fields[offset + 7] = bytes[7];
-            }
-            JvmValue::Reference(value) => {
-                let bytes = value.0.to_be_bytes();
-                self.fields[offset + 0] = bytes[0];
-                self.fields[offset + 1] = bytes[1];
-            }
-            JvmValue::Long(value) => {
-                let bytes = value.0.to_be_bytes();
-                self.fields[offset + 0] = bytes[0];
-                self.fields[offset + 1] = bytes[1];
-                self.fields[offset + 2] = bytes[2];
-                self.fields[offset + 3] = bytes[3];
-                self.fields[offset + 4] = bytes[4];
-                self.fields[offset + 5] = bytes[5];
-                self.fields[offset + 6] = bytes[6];
-                self.fields[offset + 7] = bytes[7];
-            }
-            JvmValue::Float(value) => {
-                let bytes = value.0.to_be_bytes();
-                self.fields[offset + 0] = bytes[0];
-                self.fields[offset + 1] = bytes[1];
-                self.fields[offset + 2] = bytes[2];
-                self.fields[offset + 3] = bytes[3];
-            }
-            JvmValue::Void => {}
+    pub fn set_value(&mut self, offset: usize, ty: JvmType, value: JvmValue) {
+        match ty {
+            JvmType::Void => {},
+            JvmType::Integer => self.set_int(offset, value.int()),
+            JvmType::Long => self.set_long(offset, value.long()),
+            JvmType::Float => self.set_float(offset, value.float()),
+            JvmType::Double => self.set_double(offset, value.double()),
+            JvmType::Reference => self.set_reference(offset, value.reference()),
+            _ => todo!()
         }
+    }
+
+    pub fn set_int(&mut self, offset: usize, value: JvmInt) {
+        let bytes = value.0.to_be_bytes();
+        self.fields[offset + 0] = bytes[0];
+        self.fields[offset + 1] = bytes[1];
+        self.fields[offset + 2] = bytes[2];
+        self.fields[offset + 3] = bytes[3];
+    }
+
+    pub fn set_float(&mut self, offset: usize, value: JvmFloat) {
+        let bytes = value.0.to_be_bytes();
+        self.fields[offset + 0] = bytes[0];
+        self.fields[offset + 1] = bytes[1];
+        self.fields[offset + 2] = bytes[2];
+        self.fields[offset + 3] = bytes[3];
+    }
+
+    pub fn set_long(&mut self, offset: usize, value: JvmLong) {
+        let bytes = value.0.to_be_bytes();
+        self.fields[offset + 0] = bytes[0];
+        self.fields[offset + 1] = bytes[1];
+        self.fields[offset + 2] = bytes[2];
+        self.fields[offset + 3] = bytes[3];
+        self.fields[offset + 4] = bytes[4];
+        self.fields[offset + 5] = bytes[5];
+        self.fields[offset + 6] = bytes[6];
+        self.fields[offset + 7] = bytes[7];
+    }
+
+    pub fn set_double(&mut self, offset: usize, value: JvmDouble) {
+        let bytes = value.0.to_be_bytes();
+        self.fields[offset + 0] = bytes[0];
+        self.fields[offset + 1] = bytes[1];
+        self.fields[offset + 2] = bytes[2];
+        self.fields[offset + 3] = bytes[3];
+        self.fields[offset + 4] = bytes[4];
+        self.fields[offset + 5] = bytes[5];
+        self.fields[offset + 6] = bytes[6];
+        self.fields[offset + 7] = bytes[7];
+    }
+
+    pub fn set_reference(&mut self, offset: usize, value: JvmReference) {
+        let bytes = unsafe { value.0.into_raw().to_be_bytes() };
+        self.fields[offset + 0] = bytes[0];
+        self.fields[offset + 1] = bytes[1];
+        self.fields[offset + 2] = bytes[2];
+        self.fields[offset + 3] = bytes[3];
+        self.fields[offset + 4] = bytes[4];
+        self.fields[offset + 5] = bytes[5];
+        self.fields[offset + 6] = bytes[6];
+        self.fields[offset + 7] = bytes[7];
     }
 
     pub fn get_int(&self, offset: usize) -> JvmInt {
@@ -225,22 +246,40 @@ impl Fields {
     }
 
     pub fn get_reference(&self, offset: usize) -> JvmReference {
-        JvmReference(u16::from_be_bytes([
-            self.fields[offset + 0],
-            self.fields[offset + 1],
-        ]))
+        unsafe {
+            JvmReference(HeapIndex::from_raw(u64::from_be_bytes([
+                self.fields[offset + 0],
+                self.fields[offset + 1],
+                self.fields[offset + 2],
+                self.fields[offset + 3],
+                self.fields[offset + 4],
+                self.fields[offset + 5],
+                self.fields[offset + 6],
+                self.fields[offset + 7],
+            ])))
+        }
     }
 
     pub fn get_value(&self, offset: usize, ty: JvmType) -> JvmValue {
         match ty {
-            JvmType::Void => JvmValue::Void,
+            JvmType::Void => JvmValue::VOID,
+            JvmType::Integer => JvmValue {
+                int: self.get_int(offset).into(),
+            },
+            JvmType::Long => JvmValue {
+                long: self.get_long(offset).into(),
+            },
+            JvmType::Float => JvmValue {
+                float: self.get_float(offset).into(),
+            },
+            JvmType::Double => JvmValue {
+                double: self.get_double(offset).into(),
+            },
+            JvmType::Reference => JvmValue {
+                reference: self.get_reference(offset).to_heap_index(),
+            },
             JvmType::Byte => todo!(),
             JvmType::Char => todo!(),
-            JvmType::Integer => JvmValue::Int(self.get_int(offset)),
-            JvmType::Long => JvmValue::Long(self.get_long(offset)),
-            JvmType::Float => JvmValue::Float(self.get_float(offset)),
-            JvmType::Double => JvmValue::Double(self.get_double(offset)),
-            JvmType::Reference => JvmValue::Reference(self.get_reference(offset)),
             JvmType::Short => todo!(),
             JvmType::Boolean => todo!(),
         }

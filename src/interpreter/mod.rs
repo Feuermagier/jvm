@@ -1,14 +1,12 @@
-pub mod locals;
-pub mod stack;
 use crate::{
     bytecode,
-    interpreter::stack::{StackValue, StackValueWide},
     model::{
         class::{FieldError, MethodError},
-        class_library::{ClassIndex, ClassLibrary},
+        class_library::ClassLibrary,
         constant_pool::{ConstantPoolError, ConstantPoolIndex},
-        heap::{Heap, HeapIndex},
-        method::{MethodDescriptor, MethodImplementation, MethodIndex, MethodTable, Parameters},
+        heap::{Heap, HeapIndex, NULL_POINTER},
+        method::{MethodData, MethodIndex, MethodTable},
+        stack::{StackFrame, StackPointer, StackValue, StackValueWide},
         types::TypeError,
         value::{
             JvmDouble, JvmFloat, JvmInt, JvmLong, JvmReference, JvmValue, JVM_EQUAL, JVM_GREATER,
@@ -16,42 +14,115 @@ use crate::{
         },
     },
 };
+use std::arch::{asm, global_asm};
 
-use self::{locals::InterpreterLocals, stack::InterpreterStack};
+global_asm!(
+    ".global interpreter_trampoline",
+    "interpreter_trampoline:",
+    "sub rsp, 8", // Stack alignment (8B return address to caller of interpreter_trampoline; 16B required => 8B padding)
+    "mov rbx, rdi", // Store the global references in registers that are callee-saved in sysv64
+    "mov r12, rsi",
+    "mov r13, rdx",
+    "mov r14, rcx",
+    "mov r15, r8",
+    "call interpret_method",
+    "add rsp, 8", // Restore the global references
+    "mov rdi, rbx",
+    "mov rsi, r12",
+    "mov rdx, r13",
+    "mov rcx, r14",
+    "mov r8, r15",
+    "ret"
+);
 
-pub extern "sysv64" fn interpret_method(
+extern "sysv64" {
+    pub fn interpreter_trampoline();
+}
+
+global_asm!(
+    ".global foo",
+    "foo:",
+    "sub rsp, 8", // Stack alignment (8B return address to caller of interpreter_trampoline; 16B required => 8B padding)
+    "call print",
+    "add rsp, 8",
+    "ret"
+);
+
+extern "sysv64" {
+    pub fn foo();
+}
+
+#[no_mangle]
+pub extern "sysv64" fn print() {
+    println!("Boing");
+}
+
+pub extern "sysv64" fn call_method(
     method_index: MethodIndex,
+    stack: StackPointer,
     heap: &mut Heap,
     classes: &ClassLibrary,
     methods: &MethodTable,
-    this: Option<HeapIndex>,
-    parameters: Parameters,
 ) -> JvmValue {
-    interpret(method_index, heap, classes, methods, this, parameters).unwrap()
+    unsafe {
+        let target = methods.resolve(method_index);
+        let heap = heap as *mut Heap;
+        let classes = classes as *const ClassLibrary;
+        let methods = methods as *const MethodTable;
+        let method_index = method_index.into_raw();
+        let stack = stack.into_raw();
+
+        let return_value: i64;
+        asm!(
+            "call {0}",
+            "/* {0} */",
+            "mov {1}, rax",
+            in(reg) target,
+            lateout(reg) return_value,
+            in("rdi") method_index,
+            in("rsi") stack,
+            in("rdx") heap,
+            in("rcx") classes,
+            in("r8") methods,
+        );
+        JvmValue::from_native(return_value)
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "sysv64" fn interpret_method(
+    method_index: MethodIndex,
+    stack: StackPointer,
+    heap: *mut Heap,
+    classes: *const ClassLibrary,
+    methods: *const MethodTable,
+) -> i64 {
+    let heap = &mut *heap;
+    let classes = &*classes;
+    let methods = &*methods;
+
+    let method = methods.get_data(method_index);
+    let mut stack_frame = StackFrame::prepare(stack, method.argument_count, method.max_locals);
+    let return_value = interpret(method, heap, classes, methods, &mut stack_frame).unwrap();
+    stack_frame.clear();
+
+    return_value.to_native()
 }
 
 fn interpret(
-    method_index: MethodIndex,
+    method: &MethodData,
     heap: &mut Heap,
     classes: &ClassLibrary,
     methods: &MethodTable,
-    this: Option<HeapIndex>,
-    parameters: Parameters,
+    stack: &mut StackFrame,
 ) -> Result<JvmValue, ExecutionError> {
-    let method = methods.get_data(method_index);
-
     let callee_class = classes.resolve(method.owning_class);
     println!(
         "========= Entered method {0} of type {1}",
         &method.name,
         callee_class.name().unwrap()
     );
-
-    let mut locals = InterpreterLocals::new(method.max_locals, parameters, this);
-    let mut stack = InterpreterStack::new(method.max_stack);
-
     let mut pc = 0;
-
     let code = &method.code;
     let return_value = loop {
         if pc >= code.len() {
@@ -132,25 +203,26 @@ fn interpret(
 
             bytecode::LDC => {
                 let index = ConstantPoolIndex::from(code[pc + 1] as u16);
-                let value = callee_class.get_loadable(index)?;
-                stack.push_value(value);
+                let (ty, value) = callee_class.get_loadable(index)?;
+                stack.push_value(value, ty);
                 pc += 1;
             }
             bytecode::LDC_W | bytecode::LDC2_W => {
                 let index =
                     ConstantPoolIndex::from(u16::from_be_bytes([code[pc + 1], code[pc + 2]]));
-                let value = callee_class.get_loadable(index)?;
-                stack.push_value(value);
+                let (ty, value) = callee_class.get_loadable(index)?;
+                stack.push_value(value, ty);
                 pc += 3;
             }
 
+            // TODO local variable access for longs / doubles is most likely not working
             bytecode::ILOAD
             | bytecode::LLOAD
             | bytecode::FLOAD
             | bytecode::DLOAD
             | bytecode::ALOAD => {
                 let index = code[pc + 1];
-                stack.push(locals.get(index as usize));
+                stack.push(stack.get_local(index as usize));
                 pc += 2;
             }
 
@@ -160,7 +232,7 @@ fn interpret(
             | bytecode::FLOAD_0
             | bytecode::DLOAD_0
             | bytecode::ALOAD_0 => {
-                stack.push(locals.get(0));
+                stack.push(stack.get_local(0));
                 pc += 1;
             }
             bytecode::ILOAD_1
@@ -168,7 +240,7 @@ fn interpret(
             | bytecode::FLOAD_1
             | bytecode::DLOAD_1
             | bytecode::ALOAD_1 => {
-                stack.push(locals.get(1));
+                stack.push(stack.get_local(1));
                 pc += 1;
             }
             bytecode::ILOAD_2
@@ -176,7 +248,7 @@ fn interpret(
             | bytecode::FLOAD_2
             | bytecode::DLOAD_2
             | bytecode::ALOAD_2 => {
-                stack.push(locals.get(2));
+                stack.push(stack.get_local(2));
                 pc += 1;
             }
             bytecode::ILOAD_3
@@ -184,7 +256,7 @@ fn interpret(
             | bytecode::FLOAD_3
             | bytecode::DLOAD_3
             | bytecode::ALOAD_3 => {
-                stack.push(locals.get(3));
+                stack.push(stack.get_local(3));
                 pc += 1;
             }
 
@@ -195,7 +267,8 @@ fn interpret(
             | bytecode::DSTORE
             | bytecode::ASTORE => {
                 let index = code[pc + 1];
-                locals.set(index as usize, stack.pop());
+                let value = stack.pop();
+                stack.set_local(index as usize, value);
                 pc += 2;
             }
 
@@ -204,7 +277,8 @@ fn interpret(
             | bytecode::FSTORE_0
             | bytecode::DSTORE_0
             | bytecode::ASTORE_0 => {
-                locals.set(0, stack.pop());
+                let value = stack.pop();
+                stack.set_local(0, value);
                 pc += 1;
             }
             bytecode::ISTORE_1
@@ -212,7 +286,8 @@ fn interpret(
             | bytecode::FSTORE_1
             | bytecode::DSTORE_1
             | bytecode::ASTORE_1 => {
-                locals.set(1, stack.pop());
+                let value = stack.pop();
+                stack.set_local(1, value);
                 pc += 1;
             }
             bytecode::ISTORE_2
@@ -220,7 +295,8 @@ fn interpret(
             | bytecode::FSTORE_2
             | bytecode::DSTORE_2
             | bytecode::ASTORE_2 => {
-                locals.set(2, stack.pop());
+                let value = stack.pop();
+                stack.set_local(2, value);
                 pc += 1;
             }
             bytecode::ISTORE_3
@@ -228,7 +304,8 @@ fn interpret(
             | bytecode::FSTORE_3
             | bytecode::DSTORE_3
             | bytecode::ASTORE_3 => {
-                locals.set(3, stack.pop());
+                let value = stack.pop();
+                stack.set_local(3, value);
                 pc += 1;
             }
 
@@ -466,9 +543,9 @@ fn interpret(
             bytecode::IINC => {
                 let index = code[pc + 1] as usize;
                 let increment = unsafe { std::mem::transmute::<u8, i8>(code[pc + 2]) } as i32;
-                locals.set(
+                stack.set_local(
                     index,
-                    StackValue::from_int(JvmInt(locals.get(index).as_int().0 + increment)),
+                    StackValue::from_int(JvmInt(stack.get_local(index).as_int().0 + increment)),
                 );
                 pc += 3;
             }
@@ -729,12 +806,32 @@ fn interpret(
             // + JSR, RET (maybe)
 
             // + tableswitch, lookupswitch
-            bytecode::IRETURN => break Ok(JvmValue::Int(stack.pop().as_int())),
-            bytecode::LRETURN => break Ok(JvmValue::Long(stack.pop_wide().as_long())),
-            bytecode::FRETURN => break Ok(JvmValue::Float(stack.pop().as_float())),
-            bytecode::DRETURN => break Ok(JvmValue::Double(stack.pop_wide().as_double())),
-            bytecode::ARETURN => break Ok(JvmValue::Reference(stack.pop().as_reference())),
-            bytecode::RETURN => break Ok(JvmValue::Void),
+            bytecode::IRETURN => {
+                break Ok(JvmValue {
+                    int: stack.pop().as_int().into(),
+                })
+            }
+            bytecode::LRETURN => {
+                break Ok(JvmValue {
+                    long: stack.pop_wide().as_long().into(),
+                })
+            }
+            bytecode::FRETURN => {
+                break Ok(JvmValue {
+                    float: stack.pop().as_float().into(),
+                })
+            }
+            bytecode::DRETURN => {
+                break Ok(JvmValue {
+                    double: stack.pop_wide().as_double().into(),
+                })
+            }
+            bytecode::ARETURN => {
+                break Ok(JvmValue {
+                    reference: stack.pop().as_reference().to_heap_index(),
+                })
+            }
+            bytecode::RETURN => break Ok(JvmValue::VOID),
 
             bytecode::GETSTATIC => {
                 let (class, field) = callee_class.resolve_static_field(
@@ -742,9 +839,10 @@ fn interpret(
                     classes,
                     heap,
                     methods,
+                    stack.get_stack_for_call(),
                 )?;
-                let field = classes.resolve(class).get_static_field(field);
-                stack.push_value(field);
+                let value = classes.resolve(class).get_static_field(field);
+                stack.push_value(value, field.ty);
                 pc += 3;
             }
             bytecode::PUTSTATIC => {
@@ -753,6 +851,7 @@ fn interpret(
                     classes,
                     heap,
                     methods,
+                    stack.get_stack_for_call(),
                 )?;
                 let value = stack.pop_type(field.ty);
                 classes.resolve(class).set_static_field(field, value);
@@ -764,10 +863,11 @@ fn interpret(
                     classes,
                     heap,
                     methods,
+                    stack.get_stack_for_call(),
                 )?;
                 let objectref = stack.pop().as_reference();
-                let field = heap.resolve(objectref.to_heap_index()).get_field(field);
-                stack.push_value(field);
+                let value = heap.resolve(objectref.to_heap_index()).get_field(field);
+                stack.push_value(value, field.ty);
                 pc += 3;
             }
             bytecode::PUTFIELD => {
@@ -776,6 +876,7 @@ fn interpret(
                     classes,
                     heap,
                     methods,
+                    stack.get_stack_for_call(),
                 )?;
                 let value = stack.pop_type(field.ty);
                 let objectref = stack.pop().as_reference();
@@ -787,62 +888,77 @@ fn interpret(
             bytecode::INVOKESPECIAL => {
                 let cp_index = index(code[pc + 1], code[pc + 2]);
                 //TODO match the signature
-                let (method_index, parameter_count) = callee_class
-                    .resolve_virtual_method_statically(cp_index, classes, heap, methods)?;
-                let instance = stack.pop().as_reference().to_heap_index();
-                let parameters = stack.pop_parameters(parameter_count);
-                let return_value = methods.resolve(method_index)(
+                let (method_index, _) = callee_class.resolve_virtual_method_statically(
+                    cp_index,
+                    classes,
+                    heap,
+                    methods,
+                    stack.get_stack_for_call(),
+                )?;
+                let return_type = methods.get_data(method_index).return_type;
+                let return_value = call_method(
                     method_index,
+                    stack.get_stack_for_call(),
                     heap,
                     classes,
                     methods,
-                    Some(instance),
-                    parameters,
                 );
-                stack.push_value(return_value);
+                stack.push_value(return_value, return_type);
                 pc += 3;
             }
             bytecode::INVOKESTATIC => {
                 let cp_index = index(code[pc + 1], code[pc + 2]);
-                let (method_index, parameter_count) =
-                    callee_class.resolve_static_method(cp_index, classes, heap, methods)?;
-                let parameters = stack.pop_parameters(parameter_count);
-                let return_value = methods.resolve(method_index)(
+                let (method_index, _) = callee_class.resolve_static_method(
+                    cp_index,
+                    classes,
+                    heap,
+                    methods,
+                    stack.get_stack_for_call(),
+                )?;
+                let return_type = methods.get_data(method_index).return_type;
+                let return_value = call_method(
                     method_index,
+                    stack.get_stack_for_call(),
                     heap,
                     classes,
                     methods,
-                    None,
-                    parameters,
                 );
-                stack.push_value(return_value);
+                stack.push_value(return_value, return_type);
                 pc += 3;
             }
             bytecode::INVOKEVIRTUAL => {
                 let cp_index = index(code[pc + 1], code[pc + 2]);
                 //TODO match the signature
-                let (virtual_index, parameter_count) =
-                    callee_class.resolve_virtual_method(cp_index, classes, heap, methods)?;
-                let parameters = stack.pop_parameters(parameter_count);
+                let (virtual_index, _) = callee_class.resolve_virtual_method(
+                    cp_index,
+                    classes,
+                    heap,
+                    methods,
+                    stack.get_stack_for_call(),
+                )?;
                 let instance = stack.pop().as_reference().to_heap_index();
                 let method_index = heap
                     .resolve(instance)
                     .dispatch_virtual(virtual_index, classes);
-                let return_value = methods.resolve(method_index)(
+                // Re-push the instance because the callee need is as the this reference
+                stack.push(StackValue::from_reference(JvmReference(instance)));
+
+                let return_type = methods.get_data(method_index).return_type;
+                let return_value = call_method(
                     method_index,
+                    stack.get_stack_for_call(),
                     heap,
                     classes,
                     methods,
-                    Some(instance),
-                    parameters,
                 );
-                stack.push_value(return_value);
+                stack.push_value(return_value, return_type);
                 pc += 3;
             }
             // + invokeinterface, invokedynamic
             bytecode::NEW => {
                 let class_name = callee_class.resolve_type(index(code[pc + 1], code[pc + 2]))?;
-                let class = classes.resolve_by_name(class_name, methods, heap);
+                let class =
+                    classes.resolve_by_name(class_name, methods, heap, stack.get_stack_for_call());
                 let instance = heap.instantiate(class);
                 stack.push(StackValue::from_reference(JvmReference::from_heap_index(
                     instance,

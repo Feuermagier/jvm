@@ -1,10 +1,11 @@
-public abstract class Test {
-    static double a;
-    static int q;
+public class Test {
+    static int a;
+	public static void main() {
+        foo(5);
+        foo(-3);
+    }
     
-    abstract void foo();
-    
-    private void bar() {
-        q = 5;
+    static void foo(int x) {
+        a = x;
     }
 }

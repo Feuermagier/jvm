@@ -10,8 +10,9 @@ use super::{
     class_library::{ClassIndex, ClassLibrary},
     constant_pool::{ConstantPool, ConstantPoolIndex, FieldReference, MethodReference},
     field::{self, FieldDescriptor, FieldInfo, FieldLayout, Fields},
-    heap::Heap,
-    method::{MethodCode, MethodData, MethodIndex, MethodTable, Parameters},
+    heap::{Heap, HeapIndex, NULL_POINTER},
+    method::{MethodCode, MethodData, MethodImplementation, MethodIndex, MethodTable},
+    stack::StackPointer,
     types::JvmType,
     value::JvmValue,
 };
@@ -59,13 +60,15 @@ impl Class {
             match &desc.code {
                 MethodCode::Bytecode(code) => {
                     let method_index = methods.add_method(
-                        Box::new(interpreter::interpret_method.clone()),
+                        MethodImplementation::Interpreted,
                         MethodData {
                             name: desc.name.clone(),
                             code: code.clone(),
                             max_stack: desc.max_stack,
                             max_locals: desc.max_locals,
                             owning_class: index,
+                            argument_count: desc.parameters.len(),
+                            return_type: desc.return_type,
                         },
                     );
                     // Quite sure parameters.len() isn't correct: Parameter count should be in words (i.e. 4 bytes), but parameter_count will be e.g. 1 for a double
@@ -93,13 +96,15 @@ impl Class {
             match &desc.code {
                 MethodCode::Bytecode(code) => {
                     let method_index = methods.add_method(
-                        Box::new(interpreter::interpret_method.clone()),
+                        MethodImplementation::Interpreted,
                         MethodData {
                             name: desc.name.clone(),
                             code: code.clone(),
                             max_stack: desc.max_stack,
                             max_locals: desc.max_locals,
                             owning_class: index,
+                            argument_count: desc.parameters.len(),
+                            return_type: desc.return_type,
                         },
                     );
 
@@ -150,16 +155,10 @@ impl Class {
         methods: &MethodTable,
         classes: &ClassLibrary,
         heap: &mut Heap,
+        stack: StackPointer,
     ) -> Result<(), ExecutionError> {
         if let Some((clinit, _)) = self.static_methods.get("<clinit>") {
-            let _return_value = methods.resolve(*clinit)(
-                *clinit,
-                heap,
-                classes,
-                methods,
-                None,
-                Parameters::empty(),
-            );
+            let _return_value = interpreter::call_method(*clinit, stack, heap, classes, methods);
         }
         Ok(())
     }
@@ -170,6 +169,7 @@ impl Class {
         classes: &ClassLibrary,
         heap: &mut Heap,
         methods: &MethodTable,
+        stack: StackPointer,
     ) -> Result<FieldInfo, FieldError> {
         match self.constant_pool.get(index)? {
             ConstantPoolEntry::FieldReference(reference) => match reference {
@@ -185,7 +185,8 @@ impl Class {
                     let callee_class_name = self
                         .constant_pool
                         .get_utf8(self.constant_pool.get_class(*class)?)?;
-                    let callee_class = classes.resolve_by_name(callee_class_name, methods, heap);
+                    let callee_class =
+                        classes.resolve_by_name(callee_class_name, methods, heap, stack);
 
                     let info = callee_class.field_layout.resolve(name)?;
 
@@ -207,6 +208,7 @@ impl Class {
         classes: &ClassLibrary,
         heap: &mut Heap,
         methods: &MethodTable,
+        stack: StackPointer,
     ) -> Result<(ClassIndex, FieldInfo), FieldError> {
         match self.constant_pool.get(index)? {
             //TODO use the class
@@ -225,7 +227,7 @@ impl Class {
                         .get_utf8(self.constant_pool.get_class(*class)?)?;
 
                     let (owning_class, info) = classes
-                        .resolve_by_name(callee_class_name, methods, heap)
+                        .resolve_by_name(callee_class_name, methods, heap, stack)
                         .resolve_own_static_field(name, classes)?;
 
                     self.constant_pool
@@ -262,6 +264,7 @@ impl Class {
         classes: &ClassLibrary,
         heap: &mut Heap,
         methods: &MethodTable,
+        stack: StackPointer,
     ) -> Result<(MethodIndex, usize), MethodError> {
         match self.constant_pool.get_method(index)? {
             MethodReference::ResolvedStatic {
@@ -277,7 +280,7 @@ impl Class {
                 let name = self.constant_pool.get_utf8(name)?;
 
                 let method = classes
-                    .resolve_by_name(callee_class, methods, heap)
+                    .resolve_by_name(callee_class, methods, heap, stack)
                     .static_methods
                     .get(name)
                     .ok_or_else(|| MethodError::UnknownStatic(name.to_string()))?;
@@ -301,6 +304,7 @@ impl Class {
         classes: &ClassLibrary,
         heap: &mut Heap,
         methods: &MethodTable,
+        stack: StackPointer,
     ) -> Result<(MethodIndex, usize), MethodError> {
         match self.constant_pool.get_method(index)? {
             MethodReference::ResolvedStatic {
@@ -316,7 +320,7 @@ impl Class {
                 let name = self.constant_pool.get_utf8(name)?;
 
                 let (method_index, virtual_index, parameter_count) = *classes
-                    .resolve_by_name(callee_class, methods, heap)
+                    .resolve_by_name(callee_class, methods, heap, stack)
                     .virtual_methods
                     .get(name)
                     .ok_or_else(|| MethodError::UnknownStatic(name.to_string()))?;
@@ -340,6 +344,7 @@ impl Class {
         classes: &ClassLibrary,
         heap: &mut Heap,
         methods: &MethodTable,
+        stack: StackPointer,
     ) -> Result<(VirtualMethodIndex, usize), MethodError> {
         match self.constant_pool.get_method(index)? {
             MethodReference::ResolvedVirtual {
@@ -356,7 +361,7 @@ impl Class {
                 let name = self.constant_pool.get_utf8(name)?;
 
                 let (method_index, virtual_index, parameter_count) = *classes
-                    .resolve_by_name(callee_class, methods, heap)
+                    .resolve_by_name(callee_class, methods, heap, stack)
                     .virtual_methods
                     .get(name)
                     .ok_or_else(|| MethodError::UnknownVirtual(name.to_string()))?;
@@ -390,16 +395,39 @@ impl Class {
     pub fn set_static_field(&self, info: FieldInfo, value: JvmValue) {
         self.static_fields
             .borrow_mut()
-            .set_value(info.offset, value);
+            .set_value(info.offset, info.ty, value);
     }
 
-    pub fn get_loadable(&self, index: ConstantPoolIndex) -> Result<JvmValue, ConstantPoolError> {
+    pub fn get_loadable(
+        &self,
+        index: ConstantPoolIndex,
+    ) -> Result<(JvmType, JvmValue), ConstantPoolError> {
         let value = self.constant_pool.get(index)?;
         match value {
-            ConstantPoolEntry::Integer(value) => Ok(JvmValue::Int((*value).into())),
-            ConstantPoolEntry::Long(value) => Ok(JvmValue::Long((*value).into())),
-            ConstantPoolEntry::Float(value) => Ok(JvmValue::Float((*value).into())),
-            ConstantPoolEntry::Double(value) => Ok(JvmValue::Double((*value).into())),
+            ConstantPoolEntry::Integer(value) => Ok((
+                JvmType::Integer,
+                JvmValue {
+                    int: (*value).into(),
+                },
+            )),
+            ConstantPoolEntry::Long(value) => Ok((
+                JvmType::Long,
+                JvmValue {
+                    long: (*value).into(),
+                },
+            )),
+            ConstantPoolEntry::Float(value) => Ok((
+                JvmType::Float,
+                JvmValue {
+                    float: (*value).into(),
+                },
+            )),
+            ConstantPoolEntry::Double(value) => Ok((
+                JvmType::Double,
+                JvmValue {
+                    double: (*value).into(),
+                },
+            )),
             ConstantPoolEntry::String(_) => todo!(),
             ConstantPoolEntry::Class { .. } => todo!(),
             // + MethodHandle, MethodType, Dynamic
@@ -438,7 +466,7 @@ impl Instance {
     }
 
     pub fn set_field(&mut self, info: FieldInfo, value: JvmValue) {
-        self.fields.set_value(info.offset, value);
+        self.fields.set_value(info.offset, info.ty, value);
     }
 
     pub fn class(&self) -> ClassIndex {
@@ -457,19 +485,6 @@ impl Instance {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(transparent)]
 pub struct VirtualMethodIndex(usize);
-
-fn place_fields(descriptors: &Vec<FieldDescriptor>) -> (usize, HashMap<String, (usize, JvmType)>) {
-    let count = descriptors.len();
-    let mut offset_map = HashMap::with_capacity(count);
-    let mut offset = 0;
-    for desc in descriptors {
-        let size = desc.ty.size();
-        offset_map.insert(desc.name.clone(), (offset, desc.ty.clone()));
-        offset += size;
-    }
-
-    (offset, offset_map)
-}
 
 #[derive(thiserror::Error, Debug)]
 pub enum MethodError {

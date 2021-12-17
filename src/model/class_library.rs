@@ -13,6 +13,7 @@ use super::{
     constant_pool::ConstantPoolError,
     heap::Heap,
     method::MethodTable,
+    stack::StackPointer,
 };
 
 pub struct ClassLibrary {
@@ -30,12 +31,18 @@ impl ClassLibrary {
         }
     }
 
-    pub fn resolve_by_name(&self, name: &str, methods: &MethodTable, heap: &mut Heap) -> &Class {
+    pub fn resolve_by_name(
+        &self,
+        name: &str,
+        methods: &MethodTable,
+        heap: &mut Heap,
+        stack: StackPointer,
+    ) -> &Class {
         let index = self.name_mappings.borrow().get(name).map(|i| *i);
         if let Some(index) = index {
             &self.classes[index]
         } else {
-            let index = self.load(name, heap, methods).unwrap();
+            let index = self.load(name, heap, methods, stack).unwrap();
             self.resolve(index)
         }
     }
@@ -50,6 +57,7 @@ impl ClassLibrary {
         name: &str,
         heap: &mut Heap,
         methods: &MethodTable,
+        stack: StackPointer,
     ) -> Result<ClassIndex, ClassResolveError> {
         log::info!("Loading class {}", name);
         let bytes = self.class_loader.load_class(name.to_string());
@@ -57,7 +65,7 @@ impl ClassLibrary {
 
         let super_class = if data.super_class.is_valid() {
             let name = constant_pool.resolve_type(data.super_class)?;
-            Some(self.resolve_by_name(name, methods, heap))
+            Some(self.resolve_by_name(name, methods, heap, stack))
         } else {
             None
         };
@@ -71,7 +79,7 @@ impl ClassLibrary {
             .insert(class.name()?.to_string(), index);
         self.classes.push(class);
 
-        self.classes[index].bootstrap(methods, self, heap)?;
+        self.classes[index].bootstrap(methods, self, heap, stack)?;
 
         Ok(ClassIndex(index))
     }
