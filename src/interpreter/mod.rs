@@ -190,7 +190,7 @@ fn interpret(
             }
 
             bytecode::BIPUSH => {
-                stack.push(StackValue::from_int(JvmInt(code[pc + 1] as i32)));
+                stack.push(StackValue::from_int(JvmInt(i8::from_be_bytes([code[pc + 1]]) as i32)));
                 pc += 2;
             }
             bytecode::SIPUSH => {
