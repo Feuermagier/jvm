@@ -4,7 +4,7 @@ use crate::{
         class::{FieldError, MethodError},
         class_library::ClassLibrary,
         constant_pool::{ConstantPoolError, ConstantPoolIndex},
-        heap::{Heap, HeapIndex, NULL_POINTER},
+        heap::Heap,
         method::{MethodData, MethodIndex, MethodTable},
         stack::{StackFrame, StackPointer, StackValue, StackValueWide},
         types::TypeError,

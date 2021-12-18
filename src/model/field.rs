@@ -126,7 +126,7 @@ impl Fields {
             fields: vec![0; layout.length],
         };
 
-        // todo
+        // TODO
         /*
         for (offset, _, constant_value) in layout.fields.values() {
             if let Some(value) = constant_value {

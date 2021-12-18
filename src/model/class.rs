@@ -9,8 +9,8 @@ use crate::{
 use super::{
     class_library::{ClassIndex, ClassLibrary},
     constant_pool::{ConstantPool, ConstantPoolIndex, FieldReference, MethodReference},
-    field::{self, FieldDescriptor, FieldInfo, FieldLayout, Fields},
-    heap::{Heap, HeapIndex, NULL_POINTER},
+    field::{self, FieldInfo, FieldLayout, Fields},
+    heap::Heap,
     method::{MethodCode, MethodData, MethodImplementation, MethodIndex, MethodTable},
     stack::StackPointer,
     types::JvmType,

@@ -16,7 +16,7 @@ use crate::{
     class_loader::BootstrapClassLoader,
     model::{
         class_library::ClassLibrary,
-        heap::{Heap, NULL_POINTER},
+        heap::Heap,
         method::MethodTable,
         stack::StackPointer,
     },
