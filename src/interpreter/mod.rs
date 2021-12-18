@@ -199,19 +199,16 @@ fn interpret(
                 pc += 3;
             }
 
-            // TODO local variable access for longs / doubles is most likely not working
             bytecode::ILOAD | bytecode::FLOAD | bytecode::ALOAD => {
                 let index = code[pc + 1];
                 stack.push(stack.get_local(index as usize));
                 pc += 2;
             }
-
             bytecode::LLOAD | bytecode::DLOAD => {
                 let index = code[pc + 1] as usize;
                 stack.push_wide((stack.get_local(index), stack.get_local(index + 1)));
                 pc += 1;
             }
-
             bytecode::ILOAD_0 | bytecode::FLOAD_0 | bytecode::ALOAD_0 => {
                 stack.push(stack.get_local(0));
                 pc += 1;
@@ -247,51 +244,75 @@ fn interpret(
 
             // + array loads
             //TODO stores for double/long shoud use two slots
-            bytecode::ISTORE
-            | bytecode::LSTORE
-            | bytecode::FSTORE
-            | bytecode::DSTORE
-            | bytecode::ASTORE => {
+            bytecode::ISTORE | bytecode::FSTORE | bytecode::ASTORE => {
                 let index = code[pc + 1];
                 let value = stack.pop();
                 stack.set_local(index as usize, value);
                 pc += 2;
             }
+            bytecode::LSTORE | bytecode::DSTORE => {
+                let index = code[pc + 1] as usize;
+                let top = stack.pop();
+                let second = stack.pop();
+                stack.set_local(index, second);
+                stack.set_local(index + 1, top);
+                pc += 2;
+            }
 
             bytecode::ISTORE_0
-            | bytecode::LSTORE_0
             | bytecode::FSTORE_0
-            | bytecode::DSTORE_0
             | bytecode::ASTORE_0 => {
                 let value = stack.pop();
                 stack.set_local(0, value);
                 pc += 1;
             }
+            bytecode::LSTORE_0 | bytecode::DSTORE_0 => {
+                let top = stack.pop();
+                let second = stack.pop();
+                stack.set_local(0, second);
+                stack.set_local(1, top);
+                pc += 1;
+            }
             bytecode::ISTORE_1
-            | bytecode::LSTORE_1
             | bytecode::FSTORE_1
-            | bytecode::DSTORE_1
             | bytecode::ASTORE_1 => {
                 let value = stack.pop();
                 stack.set_local(1, value);
                 pc += 1;
             }
+            bytecode::LSTORE_1 | bytecode::DSTORE_1 => {
+                let top = stack.pop();
+                let second = stack.pop();
+                stack.set_local(1, second);
+                stack.set_local(2, top);
+                pc += 1;
+            }
             bytecode::ISTORE_2
-            | bytecode::LSTORE_2
             | bytecode::FSTORE_2
-            | bytecode::DSTORE_2
             | bytecode::ASTORE_2 => {
                 let value = stack.pop();
                 stack.set_local(2, value);
                 pc += 1;
             }
+            bytecode::LSTORE_2 | bytecode::DSTORE_2 => {
+                let top = stack.pop();
+                let second = stack.pop();
+                stack.set_local(2, second);
+                stack.set_local(3, top);
+                pc += 1;
+            }
             bytecode::ISTORE_3
-            | bytecode::LSTORE_3
             | bytecode::FSTORE_3
-            | bytecode::DSTORE_3
             | bytecode::ASTORE_3 => {
                 let value = stack.pop();
                 stack.set_local(3, value);
+                pc += 1;
+            }
+            bytecode::LSTORE_3 | bytecode::DSTORE_3 => {
+                let top = stack.pop();
+                let second = stack.pop();
+                stack.set_local(3, second);
+                stack.set_local(4, top);
                 pc += 1;
             }
 
