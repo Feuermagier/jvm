@@ -1,28 +1,99 @@
-use super::class::{Class, Instance};
+use crate::list::NativeList;
+
+use super::{
+    class::{Class, VirtualMethodIndex},
+    class_library::{ClassIndex, ClassLibrary},
+    field::{FieldInfo, Fields},
+    method::MethodIndex,
+    value::JvmValue,
+};
 
 pub struct Heap {
-    objects: Vec<Instance>,
+    content: NativeList<u8>,
+    tail: usize,
 }
 
 impl Heap {
-    pub fn new() -> Self {
+    pub fn new(size: usize) -> Self {
         Self {
-            objects: Vec::new(),
+            content: NativeList::alloc(size),
+            tail: 0,
         }
     }
 
-    pub fn resolve_mut(&mut self, index: HeapIndex) -> &mut Instance {
-        &mut self.objects[index.0 as usize - 1]
-    }
-
-    pub fn resolve(&self, index: HeapIndex) -> &Instance {
-        &self.objects[index.0 as usize - 1]
+    pub fn resolve(&mut self, index: HeapIndex) -> Instance {
+        unsafe {
+            Instance {
+                class: self.get_class_index(index.0 as usize),
+                fields: Fields::at(self.content.get_pointer().offset(index.0 as isize + 8)),
+            }
+        }
     }
 
     pub fn instantiate(&mut self, class: &Class) -> HeapIndex {
-        let instance = class.instantiate();
-        self.objects.push(instance);
-        HeapIndex(self.objects.len() as u64)
+        unsafe {
+            let index = self.tail;
+            self.set_class_index(self.tail, class.index());
+            let _ = Fields::init_from_layout_at(
+                self.content.get_pointer().offset(8),
+                class.field_layout(),
+                class.field_descriptors(),
+            );
+            self.tail += 8 + class.field_layout().byte_length();
+            HeapIndex(index as u64)
+        }
+    }
+
+    unsafe fn get_class_index(&self, index: usize) -> ClassIndex {
+        ClassIndex(u64::from_be_bytes([
+            self.content.get(index + 0),
+            self.content.get(index + 1),
+            self.content.get(index + 2),
+            self.content.get(index + 3),
+            self.content.get(index + 4),
+            self.content.get(index + 5),
+            self.content.get(index + 6),
+            self.content.get(index + 7),
+        ]) as usize)
+    }
+
+    unsafe fn set_class_index(&mut self, index: usize, class_index: ClassIndex) {
+        let bytes = class_index.0.to_be_bytes();
+        self.content.set(index + 0, bytes[0]);
+        self.content.set(index + 1, bytes[1]);
+        self.content.set(index + 2, bytes[2]);
+        self.content.set(index + 3, bytes[3]);
+        self.content.set(index + 5, bytes[4]);
+        self.content.set(index + 6, bytes[5]);
+        self.content.set(index + 7, bytes[6]);
+        self.content.set(index + 8, bytes[7]);
+    }
+}
+
+pub struct Instance {
+    class: ClassIndex,
+    fields: Fields,
+}
+
+impl Instance {
+    pub fn get_field(&self, info: FieldInfo) -> JvmValue {
+        self.fields.get_value(info.offset, info.ty)
+    }
+
+    pub fn set_field(&mut self, info: FieldInfo, value: JvmValue) {
+        self.fields.set_value(info.offset, info.ty, value);
+    }
+
+    pub fn class(&self) -> ClassIndex {
+        self.class
+    }
+
+    pub fn dispatch_virtual(
+        &self,
+        method: VirtualMethodIndex,
+        classes: &ClassLibrary,
+    ) -> MethodIndex {
+        classes.resolve(self.class).dispatch_virtual(method)
     }
 }
 

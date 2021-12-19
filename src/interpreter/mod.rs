@@ -189,7 +189,7 @@ fn interpret(
                 let index = ConstantPoolIndex::from(code[pc + 1] as u16);
                 let (ty, value) = callee_class.get_loadable(index)?;
                 stack.push_value(value, ty);
-                pc += 1;
+                pc += 2;
             }
             bytecode::LDC_W | bytecode::LDC2_W => {
                 let index =
@@ -887,7 +887,7 @@ fn interpret(
                 )?;
                 let value = stack.pop_type(field.ty);
                 let objectref = stack.pop().as_reference();
-                heap.resolve_mut(objectref.to_heap_index())
+                heap.resolve(objectref.to_heap_index())
                     .set_field(field, value);
                 pc += 3;
             }

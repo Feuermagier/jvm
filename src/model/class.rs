@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::HashMap};
+use std::{borrow::BorrowMut, cell::RefCell, collections::HashMap};
 
 use crate::{
     class_parser::ClassData,
@@ -9,7 +9,7 @@ use crate::{
 use super::{
     class_library::{ClassIndex, ClassLibrary},
     constant_pool::{ConstantPool, ConstantPoolIndex, FieldReference, MethodReference},
-    field::{self, FieldInfo, FieldLayout, Fields},
+    field::{self, FieldDescriptor, FieldInfo, FieldLayout, Fields},
     heap::Heap,
     method::{MethodCode, MethodData, MethodImplementation, MethodIndex, MethodTable},
     stack::StackPointer,
@@ -40,9 +40,17 @@ impl Class {
         index: ClassIndex,
         super_class: Option<&Class>,
         methods: &MethodTable,
-    ) -> Result<Self, ClassCreationError> {
+        static_fields_position: *mut u8,
+    ) -> Result<(Self, usize), ClassCreationError> {
         let static_field_layout = field::layout_fields(&FieldLayout::empty(), &data.static_fields);
-        let static_fields = Fields::init_from_layout(&static_field_layout);
+        let static_fields = unsafe {
+            Fields::init_from_layout_at(
+                static_fields_position,
+                &static_field_layout,
+                &data.static_fields,
+            )
+        };
+        let statics_length = static_field_layout.byte_length();
 
         let field_layout = if let Some(super_class) = super_class {
             let super_field_layout = &super_class.field_layout;
@@ -116,18 +124,21 @@ impl Class {
             }
         }
 
-        Ok(Self {
-            index,
-            data,
-            super_class: super_class.map(|class| class.index()),
-            constant_pool,
-            static_field_layout,
-            static_fields: RefCell::new(static_fields),
-            field_layout,
-            static_methods,
-            virtual_methods,
-            dispatch_table,
-        })
+        Ok((
+            Self {
+                index,
+                data,
+                super_class: super_class.map(|class| class.index()),
+                constant_pool,
+                static_field_layout,
+                static_fields: RefCell::new(static_fields),
+                field_layout,
+                static_methods,
+                virtual_methods,
+                dispatch_table,
+            },
+            statics_length,
+        ))
     }
 
     pub fn update_class_index(&mut self, index: ClassIndex) {
@@ -419,11 +430,12 @@ impl Class {
         }
     }
 
-    pub fn instantiate(&self) -> Instance {
-        Instance {
-            class: self.index,
-            fields: Fields::init_from_layout(&self.field_layout),
-        }
+    pub fn field_layout(&self) -> &FieldLayout {
+        &self.field_layout
+    }
+
+    pub fn field_descriptors(&self) -> &[FieldDescriptor] {
+        &self.data.fields
     }
 
     pub fn name(&self) -> Result<&str, ConstantPoolError> {
@@ -437,32 +449,9 @@ impl Class {
     pub fn resolve_type(&self, index: ConstantPoolIndex) -> Result<&str, ConstantPoolError> {
         self.constant_pool.resolve_type(index)
     }
-}
 
-pub struct Instance {
-    class: ClassIndex,
-    fields: Fields,
-}
-
-impl Instance {
-    pub fn get_field(&self, info: FieldInfo) -> JvmValue {
-        self.fields.get_value(info.offset, info.ty)
-    }
-
-    pub fn set_field(&mut self, info: FieldInfo, value: JvmValue) {
-        self.fields.set_value(info.offset, info.ty, value);
-    }
-
-    pub fn class(&self) -> ClassIndex {
-        self.class
-    }
-
-    pub fn dispatch_virtual(
-        &self,
-        method: VirtualMethodIndex,
-        classes: &ClassLibrary,
-    ) -> MethodIndex {
-        classes.resolve(self.class).dispatch_table[method.0]
+    pub fn dispatch_virtual(&self, index: VirtualMethodIndex) -> MethodIndex {
+        self.dispatch_table[index.0]
     }
 }
 

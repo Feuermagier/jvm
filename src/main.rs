@@ -8,6 +8,7 @@ pub mod class_parser;
 pub mod interpreter;
 pub mod jit;
 pub mod model;
+pub mod list;
 
 use dynasmrt::{dynasm, DynasmApi, DynasmLabelApi};
 use std::arch::{asm, global_asm};
@@ -29,7 +30,7 @@ fn main() {
 
     let class_loader = BootstrapClassLoader::new();
     let classes = ClassLibrary::new(class_loader);
-    let mut heap = Heap::new();
+    let mut heap = Heap::new(20000);
     let methods = MethodTable::new(100);
     let stack = StackPointer::with_size(20000);
 
@@ -45,6 +46,9 @@ fn main() {
     dbg!(&classes
         .resolve_by_name("Test", &methods, &mut heap, stack)
         .get_static_field_by_name("a", &classes).unwrap().long());
+        dbg!(&classes
+            .resolve_by_name("Test", &methods, &mut heap, stack)
+            .get_static_field_by_name("b", &classes).unwrap().float());
 
     /*
     let mut ops = dynasmrt::x64::Assembler::new().unwrap();

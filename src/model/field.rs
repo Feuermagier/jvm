@@ -26,7 +26,7 @@ pub struct FieldInfo {
 #[derive(Clone, Debug)]
 pub struct FieldLayout {
     length: usize,
-    fields: HashMap<String, (usize, JvmType, Option<JvmValue>)>,
+    fields: HashMap<String, (usize, JvmType)>,
     spaces: Vec<EmptySpace>, // Ordered list of runs of not used bytes (ordered by their starting index)
 }
 
@@ -38,11 +38,9 @@ impl FieldLayout {
             spaces: Vec::new(),
         }
     }
-}
 
-impl FieldLayout {
     pub fn resolve(&self, name: &str) -> Result<FieldInfo, FieldError> {
-        if let Some((offset, ty, _)) = self.fields.get(name) {
+        if let Some((offset, ty)) = self.fields.get(name) {
             Ok(FieldInfo {
                 offset: *offset,
                 ty: *ty,
@@ -50,6 +48,10 @@ impl FieldLayout {
         } else {
             Err(FieldError::UnknownField(name.to_string()))
         }
+    }
+
+    pub fn byte_length(&self) -> usize {
+        self.length
     }
 }
 
@@ -66,24 +68,18 @@ pub fn layout_fields(parent_layout: &FieldLayout, fields: &Vec<FieldDescriptor>)
     'field: for field in fields_to_place {
         for i in 0..spaces.len() {
             if spaces[i].length == field.ty.size() {
-                field_mappings.insert(
-                    field.name.clone(),
-                    (spaces[i].index, field.ty, field.constant_value),
-                );
+                field_mappings.insert(field.name.clone(), (spaces[i].index, field.ty));
                 spaces.remove(i);
                 break 'field;
             } else if spaces[i].length > field.ty.size() {
-                field_mappings.insert(
-                    field.name.clone(),
-                    (spaces[i].index, field.ty, field.constant_value),
-                );
+                field_mappings.insert(field.name.clone(), (spaces[i].index, field.ty));
                 spaces[i].length -= field.ty.size();
                 spaces[i].index += field.ty.size();
                 break 'field;
             }
         }
 
-        // If we are here, no matching empty space has been found and the field will be layouted at the end of all fields
+        // If we are here, no matching empty space has been found and the field will be layouted after all other fields
         let alignment_space = if length % field.ty.alignment() == 0 {
             0
         } else {
@@ -95,10 +91,7 @@ pub fn layout_fields(parent_layout: &FieldLayout, fields: &Vec<FieldDescriptor>)
             space
         };
 
-        field_mappings.insert(
-            field.name.clone(),
-            (length + alignment_space, field.ty, field.constant_value),
-        );
+        field_mappings.insert(field.name.clone(), (length + alignment_space, field.ty));
         length += alignment_space + field.ty.size();
     }
 
@@ -117,145 +110,171 @@ struct EmptySpace {
 
 #[repr(transparent)]
 pub struct Fields {
-    fields: Vec<u8>,
+    fields: *mut u8,
 }
 
 impl Fields {
-    pub fn init_from_layout(layout: &FieldLayout) -> Self {
-        let mut fields = Self {
-            fields: vec![0; layout.length],
-        };
+    pub unsafe fn at(position: *mut u8) -> Self {
+        Self {
+            fields: position,
+        }
+    }
 
-        // TODO
-        /*
-        for (offset, _, constant_value) in layout.fields.values() {
-            if let Some(value) = constant_value {
-                fields.set_value(*offset, *value);
+    pub unsafe fn init_from_layout_at(
+        position: *mut u8,
+        layout: &FieldLayout,
+        descriptors: &[FieldDescriptor],
+    ) -> Self {
+        let mut fields = Self { fields: position };
+        for field in descriptors {
+            if let Some(constant_value) = field.constant_value {
+                fields.set_value(
+                    layout.resolve(&field.name).unwrap().offset,
+                    field.ty,
+                    constant_value,
+                );
             }
         }
-        */
         fields
     }
 
     pub fn set_value(&mut self, offset: usize, ty: JvmType, value: JvmValue) {
         match ty {
-            JvmType::Void => {},
+            JvmType::Void => {}
             JvmType::Integer => self.set_int(offset, value.int()),
             JvmType::Long => self.set_long(offset, value.long()),
             JvmType::Float => self.set_float(offset, value.float()),
             JvmType::Double => self.set_double(offset, value.double()),
             JvmType::Reference => self.set_reference(offset, value.reference()),
-            _ => todo!()
+            _ => todo!(),
         }
     }
 
     pub fn set_int(&mut self, offset: usize, value: JvmInt) {
         let bytes = value.0.to_be_bytes();
-        self.fields[offset + 0] = bytes[0];
-        self.fields[offset + 1] = bytes[1];
-        self.fields[offset + 2] = bytes[2];
-        self.fields[offset + 3] = bytes[3];
+        unsafe {
+            *self.fields.offset(offset as isize + 0) = bytes[0];
+            *self.fields.offset(offset as isize + 1) = bytes[1];
+            *self.fields.offset(offset as isize + 2) = bytes[2];
+            *self.fields.offset(offset as isize + 3) = bytes[3];
+        }
     }
 
     pub fn set_float(&mut self, offset: usize, value: JvmFloat) {
         let bytes = value.0.to_be_bytes();
-        self.fields[offset + 0] = bytes[0];
-        self.fields[offset + 1] = bytes[1];
-        self.fields[offset + 2] = bytes[2];
-        self.fields[offset + 3] = bytes[3];
+        unsafe {
+            *self.fields.offset(offset as isize + 0) = bytes[0];
+            *self.fields.offset(offset as isize + 1) = bytes[1];
+            *self.fields.offset(offset as isize + 2) = bytes[2];
+            *self.fields.offset(offset as isize + 3) = bytes[3];
+        }
     }
 
     pub fn set_long(&mut self, offset: usize, value: JvmLong) {
         let bytes = value.0.to_be_bytes();
-        self.fields[offset + 0] = bytes[0];
-        self.fields[offset + 1] = bytes[1];
-        self.fields[offset + 2] = bytes[2];
-        self.fields[offset + 3] = bytes[3];
-        self.fields[offset + 4] = bytes[4];
-        self.fields[offset + 5] = bytes[5];
-        self.fields[offset + 6] = bytes[6];
-        self.fields[offset + 7] = bytes[7];
+        unsafe {
+            *self.fields.offset(offset as isize + 0) = bytes[0];
+            *self.fields.offset(offset as isize + 1) = bytes[1];
+            *self.fields.offset(offset as isize + 2) = bytes[2];
+            *self.fields.offset(offset as isize + 3) = bytes[3];
+            *self.fields.offset(offset as isize + 4) = bytes[4];
+            *self.fields.offset(offset as isize + 5) = bytes[5];
+            *self.fields.offset(offset as isize + 6) = bytes[6];
+            *self.fields.offset(offset as isize + 7) = bytes[7];
+        }
     }
 
     pub fn set_double(&mut self, offset: usize, value: JvmDouble) {
         let bytes = value.0.to_be_bytes();
-        self.fields[offset + 0] = bytes[0];
-        self.fields[offset + 1] = bytes[1];
-        self.fields[offset + 2] = bytes[2];
-        self.fields[offset + 3] = bytes[3];
-        self.fields[offset + 4] = bytes[4];
-        self.fields[offset + 5] = bytes[5];
-        self.fields[offset + 6] = bytes[6];
-        self.fields[offset + 7] = bytes[7];
+        unsafe {
+            *self.fields.offset(offset as isize + 0) = bytes[0];
+            *self.fields.offset(offset as isize + 1) = bytes[1];
+            *self.fields.offset(offset as isize + 2) = bytes[2];
+            *self.fields.offset(offset as isize + 3) = bytes[3];
+            *self.fields.offset(offset as isize + 4) = bytes[4];
+            *self.fields.offset(offset as isize + 5) = bytes[5];
+            *self.fields.offset(offset as isize + 6) = bytes[6];
+            *self.fields.offset(offset as isize + 7) = bytes[7];
+        }
     }
 
     pub fn set_reference(&mut self, offset: usize, value: JvmReference) {
         let bytes = unsafe { value.0.into_raw().to_be_bytes() };
-        self.fields[offset + 0] = bytes[0];
-        self.fields[offset + 1] = bytes[1];
-        self.fields[offset + 2] = bytes[2];
-        self.fields[offset + 3] = bytes[3];
-        self.fields[offset + 4] = bytes[4];
-        self.fields[offset + 5] = bytes[5];
-        self.fields[offset + 6] = bytes[6];
-        self.fields[offset + 7] = bytes[7];
+        unsafe {
+            *self.fields.offset(offset as isize + 0) = bytes[0];
+            *self.fields.offset(offset as isize + 1) = bytes[1];
+            *self.fields.offset(offset as isize + 2) = bytes[2];
+            *self.fields.offset(offset as isize + 3) = bytes[3];
+            *self.fields.offset(offset as isize + 4) = bytes[4];
+            *self.fields.offset(offset as isize + 5) = bytes[5];
+            *self.fields.offset(offset as isize + 6) = bytes[6];
+            *self.fields.offset(offset as isize + 7) = bytes[7];
+        }
     }
 
     pub fn get_int(&self, offset: usize) -> JvmInt {
-        JvmInt(i32::from_be_bytes([
-            self.fields[offset + 0],
-            self.fields[offset + 1],
-            self.fields[offset + 2],
-            self.fields[offset + 3],
-        ]))
+        unsafe {
+            JvmInt(i32::from_be_bytes([
+                *self.fields.offset(offset as isize + 0),
+                *self.fields.offset(offset as isize + 1),
+                *self.fields.offset(offset as isize + 2),
+                *self.fields.offset(offset as isize + 3),
+            ]))
+        }
     }
 
     pub fn get_long(&self, offset: usize) -> JvmLong {
-        JvmLong(i64::from_be_bytes([
-            self.fields[offset + 0],
-            self.fields[offset + 1],
-            self.fields[offset + 2],
-            self.fields[offset + 3],
-            self.fields[offset + 4],
-            self.fields[offset + 5],
-            self.fields[offset + 6],
-            self.fields[offset + 7],
-        ]))
+        unsafe {
+            JvmLong(i64::from_be_bytes([
+                *self.fields.offset(offset as isize + 0),
+                *self.fields.offset(offset as isize + 1),
+                *self.fields.offset(offset as isize + 2),
+                *self.fields.offset(offset as isize + 3),
+                *self.fields.offset(offset as isize + 4),
+                *self.fields.offset(offset as isize + 5),
+                *self.fields.offset(offset as isize + 6),
+                *self.fields.offset(offset as isize + 7),
+            ]))
+        }
     }
 
     pub fn get_float(&self, offset: usize) -> JvmFloat {
-        JvmFloat(f32::from_be_bytes([
-            self.fields[offset + 0],
-            self.fields[offset + 1],
-            self.fields[offset + 2],
-            self.fields[offset + 3],
-        ]))
+        unsafe {
+            JvmFloat(f32::from_be_bytes([
+                *self.fields.offset(offset as isize + 0),
+                *self.fields.offset(offset as isize + 1),
+                *self.fields.offset(offset as isize + 2),
+                *self.fields.offset(offset as isize + 3),
+            ]))
+        }
     }
 
     pub fn get_double(&self, offset: usize) -> JvmDouble {
-        JvmDouble(f64::from_be_bytes([
-            self.fields[offset + 0],
-            self.fields[offset + 1],
-            self.fields[offset + 2],
-            self.fields[offset + 3],
-            self.fields[offset + 4],
-            self.fields[offset + 5],
-            self.fields[offset + 6],
-            self.fields[offset + 7],
-        ]))
+        unsafe {
+            JvmDouble(f64::from_be_bytes([
+                *self.fields.offset(offset as isize + 0),
+                *self.fields.offset(offset as isize + 1),
+                *self.fields.offset(offset as isize + 2),
+                *self.fields.offset(offset as isize + 3),
+                *self.fields.offset(offset as isize + 4),
+                *self.fields.offset(offset as isize + 5),
+                *self.fields.offset(offset as isize + 6),
+                *self.fields.offset(offset as isize + 7),
+            ]))
+        }
     }
 
     pub fn get_reference(&self, offset: usize) -> JvmReference {
         unsafe {
             JvmReference(HeapIndex::from_raw(u64::from_be_bytes([
-                self.fields[offset + 0],
-                self.fields[offset + 1],
-                self.fields[offset + 2],
-                self.fields[offset + 3],
-                self.fields[offset + 4],
-                self.fields[offset + 5],
-                self.fields[offset + 6],
-                self.fields[offset + 7],
+                *self.fields.offset(offset as isize + 0),
+                *self.fields.offset(offset as isize + 1),
+                *self.fields.offset(offset as isize + 2),
+                *self.fields.offset(offset as isize + 3),
+                *self.fields.offset(offset as isize + 4),
+                *self.fields.offset(offset as isize + 5),
+                *self.fields.offset(offset as isize + 6),
+                *self.fields.offset(offset as isize + 7),
             ])))
         }
     }
@@ -284,6 +303,10 @@ impl Fields {
             JvmType::Boolean => todo!(),
         }
     }
+}
+
+pub unsafe fn init_fields_at(position: *mut u8, layout: FieldLayout, fields: &[FieldDescriptor]) {
+    for field in fields {}
 }
 
 #[derive(thiserror::Error, Debug)]

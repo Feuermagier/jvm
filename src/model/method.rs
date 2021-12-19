@@ -3,7 +3,10 @@ use std::alloc::Layout;
 
 use appendlist::AppendList;
 
-use crate::interpreter::{self};
+use crate::{
+    interpreter::{self},
+    list::NativeList,
+};
 
 use super::{
     class_library::{ClassIndex, ClassLibrary},
@@ -64,16 +67,14 @@ pub enum MethodImplementation {
 
 #[repr(C)]
 pub struct MethodTable {
-    call_table: *mut u64,
+    call_table: NativeList<u64>,
     methods: AppendList<MethodEntry>,
 }
 
 impl MethodTable {
-    pub fn new(capacity: usize) -> Self {
-        let call_table_layout = Layout::from_size_align(capacity, 8).unwrap();
-        let call_table = unsafe { std::alloc::alloc(call_table_layout) as *mut u64 };
+    pub fn new(length: usize) -> Self {
         Self {
-            call_table,
+            call_table: NativeList::alloc(length),
             methods: AppendList::new(),
         }
     }
@@ -89,7 +90,7 @@ impl MethodTable {
             MethodImplementation::Interpreted => interpreter::interpreter_trampoline as u64,
         };
         unsafe {
-            *self.call_table.offset(index as isize) = ptr;
+            self.call_table.set(index, ptr);
         }
         self.methods.push(MethodEntry {
             implementation,
@@ -99,7 +100,11 @@ impl MethodTable {
     }
 
     pub unsafe fn resolve(&self, method_index: MethodIndex) -> u64 {
-        *self.call_table.offset(method_index.0 as isize)
+        self.call_table.get(method_index.0 as usize)
+    }
+
+    pub unsafe fn call_table_pointer(&self) -> *mut u64 {
+        self.call_table.get_pointer()
     }
 
     pub fn get_data(&self, method_index: MethodIndex) -> &MethodData {

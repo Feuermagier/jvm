@@ -6,6 +6,7 @@ use crate::{
     class_loader::BootstrapClassLoader,
     class_parser::{self, ParsingError},
     interpreter::ExecutionError,
+    list::NativeList,
 };
 
 use super::{
@@ -16,7 +17,12 @@ use super::{
     stack::StackPointer,
 };
 
+#[repr(C)]
 pub struct ClassLibrary {
+    dispatch_tables: NativeList<u32>,
+    static_attributes: NativeList<u8>,
+    dispatch_table_tail: usize,
+    statics_tail: usize,
     classes: AppendList<Class>,
     name_mappings: RefCell<HashMap<String, usize>>,
     class_loader: BootstrapClassLoader,
@@ -25,9 +31,13 @@ pub struct ClassLibrary {
 impl ClassLibrary {
     pub fn new(class_loader: BootstrapClassLoader) -> Self {
         Self {
+            dispatch_tables: NativeList::alloc(1000),
+            static_attributes: NativeList::alloc(4000),
             classes: AppendList::new(),
             name_mappings: RefCell::new(HashMap::new()),
             class_loader,
+            dispatch_table_tail: 0,
+            statics_tail: 0,
         }
     }
 
@@ -73,7 +83,19 @@ impl ClassLibrary {
         // The following code for creating and updating the class must not be interrupted by an access to the ClassLibrary
         // or the indices will be wrong
         let index = self.classes.len();
-        let class = Class::new(data, constant_pool, ClassIndex(index), super_class, methods)?;
+        let statics_position = unsafe {
+            self.static_attributes
+                .get_pointer()
+                .offset(self.statics_tail as isize)
+        };
+        let (class, statics_length) = Class::new(
+            data,
+            constant_pool,
+            ClassIndex(index),
+            super_class,
+            methods,
+            statics_position,
+        )?;
         self.name_mappings
             .borrow_mut()
             .insert(class.name()?.to_string(), index);
