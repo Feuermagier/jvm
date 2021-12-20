@@ -16,7 +16,7 @@ pub struct Heap {
 impl Heap {
     pub fn new(size: usize) -> Self {
         Self {
-            content: NativeList::alloc(size),
+            content: NativeList::alloc(size, 16),
             tail: 0,
         }
     }
@@ -33,9 +33,9 @@ impl Heap {
     pub fn instantiate(&mut self, class: &Class) -> HeapIndex {
         unsafe {
             let index = self.tail;
-            self.set_class_index(self.tail, class.index());
+            self.set_class_index(index, class.index());
             let _ = Fields::init_from_layout_at(
-                self.content.get_pointer().offset(8),
+                self.content.get_pointer().offset(index as isize + 8),
                 class.field_layout(),
                 class.field_descriptors(),
             );
@@ -63,10 +63,10 @@ impl Heap {
         self.content.set(index + 1, bytes[1]);
         self.content.set(index + 2, bytes[2]);
         self.content.set(index + 3, bytes[3]);
-        self.content.set(index + 5, bytes[4]);
-        self.content.set(index + 6, bytes[5]);
-        self.content.set(index + 7, bytes[6]);
-        self.content.set(index + 8, bytes[7]);
+        self.content.set(index + 4, bytes[4]);
+        self.content.set(index + 5, bytes[5]);
+        self.content.set(index + 6, bytes[6]);
+        self.content.set(index + 7, bytes[7]);
     }
 }
 
@@ -93,7 +93,7 @@ impl Instance {
         method: VirtualMethodIndex,
         classes: &ClassLibrary,
     ) -> MethodIndex {
-        classes.resolve(self.class).dispatch_virtual(method)
+        classes.resolve(self.class).dispatch_virtual_call(method)
     }
 }
 
@@ -102,11 +102,11 @@ impl Instance {
 pub struct HeapIndex(u64);
 
 impl HeapIndex {
-    pub fn as_u16(self) -> u16 {
-        self.0 as u16
+    pub fn as_u32(self) -> u32 {
+        self.0 as u32
     }
 
-    pub fn from_u16(value: u16) -> Self {
+    pub fn from_u32(value: u32) -> Self {
         Self(value as u64)
     }
 

@@ -13,16 +13,16 @@ use super::{
     class::{Class, ClassCreationError},
     constant_pool::ConstantPoolError,
     heap::Heap,
-    method::MethodTable,
+    method::{MethodIndex, MethodTable},
     stack::StackPointer,
 };
 
 #[repr(C)]
 pub struct ClassLibrary {
-    dispatch_tables: NativeList<u32>,
+    dispatch_tables: NativeList<MethodIndex>,
     static_attributes: NativeList<u8>,
-    dispatch_table_tail: usize,
-    statics_tail: usize,
+    dispatch_table_tail: RefCell<usize>, // In dwords (u32), i.e. size_of<MethodIndex>()
+    statics_tail: RefCell<usize>,        // In bytes
     classes: AppendList<Class>,
     name_mappings: RefCell<HashMap<String, usize>>,
     class_loader: BootstrapClassLoader,
@@ -31,13 +31,13 @@ pub struct ClassLibrary {
 impl ClassLibrary {
     pub fn new(class_loader: BootstrapClassLoader) -> Self {
         Self {
-            dispatch_tables: NativeList::alloc(1000),
-            static_attributes: NativeList::alloc(4000),
+            dispatch_tables: NativeList::alloc(1000, 8),
+            static_attributes: NativeList::alloc(4000, 8),
             classes: AppendList::new(),
             name_mappings: RefCell::new(HashMap::new()),
             class_loader,
-            dispatch_table_tail: 0,
-            statics_tail: 0,
+            dispatch_table_tail: RefCell::new(0),
+            statics_tail: RefCell::new(0),
         }
     }
 
@@ -86,16 +86,24 @@ impl ClassLibrary {
         let statics_position = unsafe {
             self.static_attributes
                 .get_pointer()
-                .offset(self.statics_tail as isize)
+                .offset(*self.statics_tail.borrow() as isize)
         };
-        let (class, statics_length) = Class::new(
+        let dispatch_table_position = unsafe {
+            self.dispatch_tables
+                .get_pointer()
+                .offset(*self.dispatch_table_tail.borrow() as isize)
+        };
+        let (class, statics_length, dispatch_table_length) = Class::new(
             data,
             constant_pool,
             ClassIndex(index),
             super_class,
             methods,
             statics_position,
+            dispatch_table_position,
         )?;
+        *self.statics_tail.borrow_mut() += statics_length;
+        *self.dispatch_table_tail.borrow_mut() += dispatch_table_length;
         self.name_mappings
             .borrow_mut()
             .insert(class.name()?.to_string(), index);

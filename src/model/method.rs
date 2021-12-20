@@ -1,5 +1,4 @@
 use core::fmt::Debug;
-use std::alloc::Layout;
 
 use appendlist::AppendList;
 
@@ -26,11 +25,13 @@ pub struct MethodDescriptor {
     pub code: MethodCode,
     pub max_stack: usize,
     pub max_locals: usize,
+    pub is_virtual: bool,
 }
 
 impl MethodDescriptor {
     pub fn parameter_count(&self) -> usize {
         self.parameters.iter().map(|p| p.size()).sum::<usize>() / 4
+            + if self.is_virtual { 1 } else { 0 }
     }
 }
 
@@ -74,7 +75,7 @@ pub struct MethodTable {
 impl MethodTable {
     pub fn new(length: usize) -> Self {
         Self {
-            call_table: NativeList::alloc(length),
+            call_table: NativeList::alloc(length, 8),
             methods: AppendList::new(),
         }
     }
@@ -138,13 +139,16 @@ impl MethodData {
         owning_class: ClassIndex,
     ) -> Option<Self> {
         if let MethodCode::Bytecode(code) = &desc.code {
+            // +1 for this
+            let parameter_count = desc.parameter_count();
+
             Some(Self {
                 name: desc.name.clone(),
                 code: code.clone(),
                 max_stack: desc.max_stack,
                 max_locals: desc.max_locals,
                 owning_class,
-                argument_count: desc.parameter_count(),
+                argument_count: parameter_count,
                 return_type: desc.return_type,
             })
         } else {
@@ -155,14 +159,14 @@ impl MethodData {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(transparent)]
-pub struct MethodIndex(u64);
+pub struct MethodIndex(u32);
 
 impl MethodIndex {
-    pub unsafe fn into_raw(self) -> u64 {
+    pub unsafe fn into_raw(self) -> u32 {
         self.0
     }
 
-    pub unsafe fn from_raw(value: u64) -> Self {
+    pub unsafe fn from_raw(value: u32) -> Self {
         Self(value)
     }
 }
@@ -175,6 +179,6 @@ impl From<MethodIndex> for usize {
 
 impl From<usize> for MethodIndex {
     fn from(index: usize) -> Self {
-        MethodIndex(index as u64)
+        MethodIndex(index as u32)
     }
 }

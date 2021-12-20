@@ -84,12 +84,12 @@ impl ConstantPool {
         &self,
         index: ConstantPoolIndex,
         method: MethodIndex,
-        argument_count: usize,
+        parameter_count: usize,
     ) {
         let entry = &self.entries[(index.0 - 1) as usize];
         let field = ConstantPoolEntry::MethodReference(MethodReference::ResolvedStatic {
             index: method,
-            argument_count,
+            parameter_count,
         });
 
         //Safety: This is a cache; nothing is changed here really and the cached value is constant
@@ -104,13 +104,13 @@ impl ConstantPool {
         index: ConstantPoolIndex,
         method_index: MethodIndex,
         virtual_index: VirtualMethodIndex,
-        argument_count: usize,
+        parameter_count: usize,
     ) {
         let entry = &self.entries[(index.0 - 1) as usize];
         let field = ConstantPoolEntry::MethodReference(MethodReference::ResolvedVirtual {
             method_index,
             virtual_index,
-            argument_count,
+            parameter_count,
         });
 
         //Safety: This is a cache; nothing is changed here really and the cached value is constant
@@ -200,12 +200,12 @@ pub enum MethodReference {
     },
     ResolvedStatic {
         index: MethodIndex,
-        argument_count: usize,
+        parameter_count: usize,
     },
     ResolvedVirtual {
         method_index: MethodIndex,
         virtual_index: VirtualMethodIndex,
-        argument_count: usize,
+        parameter_count: usize,
     },
 }
 

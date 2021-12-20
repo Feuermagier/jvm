@@ -1,6 +1,9 @@
 use std::alloc::Layout;
 
-use super::{value::{JvmDouble, JvmFloat, JvmInt, JvmLong, JvmReference, JvmValue}, types::JvmType};
+use super::{
+    types::JvmType,
+    value::{JvmDouble, JvmFloat, JvmInt, JvmLong, JvmReference, JvmValue},
+};
 
 /// Points to the first empty slot (a slot is 4 bytes wide)
 #[derive(Debug, Clone, Copy)]
@@ -60,15 +63,11 @@ impl StackFrame {
     }
 
     pub fn get_local(&self, index: usize) -> StackValue {
-        unsafe {
-            StackValue(*self.frame_base.0.offset(index as isize))
-        }
+        unsafe { StackValue(*self.frame_base.0.offset(index as isize)) }
     }
 
     pub fn set_local(&self, index: usize, value: StackValue) {
-        unsafe {
-            *self.frame_base.0.offset(index as isize) = value.0
-        }
+        unsafe { *self.frame_base.0.offset(index as isize) = value.0 }
     }
 
     pub fn push(&mut self, value: StackValue) {
@@ -132,6 +131,13 @@ impl StackFrame {
             JvmType::Boolean => todo!(),
         }
     }
+
+    pub fn peek(&self, offset: usize) -> StackValue {
+        unsafe {
+            // +1 because the stack pointer points to the first free slot and peek(0) should return the top value of the stack
+            StackValue(*self.stack_end.0.offset(-(offset as isize + 1)))
+        }
+    }
 }
 
 #[repr(transparent)]
@@ -154,7 +160,7 @@ impl StackValue {
     }
 
     pub fn as_reference(self) -> JvmReference {
-        (self.0 as u16).into()
+        self.0.into()
     }
 
     pub fn from_int(value: JvmInt) -> Self {

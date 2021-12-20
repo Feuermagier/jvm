@@ -289,6 +289,7 @@ fn parse_methods(
             code,
             max_stack,
             max_locals,
+            is_virtual: !is_static(access_flags),
         };
 
         if is_static(access_flags) {

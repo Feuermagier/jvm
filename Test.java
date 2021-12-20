@@ -1,14 +1,11 @@
 public class Test {
-    static float b;
-    static long a;
+    static double a;
 	public static void main() {
-		long x = -Long.MAX_VALUE;
-        foo(5);
-        foo(x);
+		Test x = new Test2();
+        x.foo(3.14);
     }
     
-    static void foo(long x) {
+    public void foo(double x) {
         a = x;
-        b = -3.14f;
     }
 }

@@ -112,7 +112,7 @@ fn interpret(
         }
 
         let opcode = code[pc];
-        //println!("0x{:#04x}", opcode);
+        //println!("{:#04x}", opcode);
         match opcode {
             bytecode::ICONST_M1 => {
                 stack.push(StackValue::from_int(JvmInt(-1)));
@@ -259,9 +259,7 @@ fn interpret(
                 pc += 2;
             }
 
-            bytecode::ISTORE_0
-            | bytecode::FSTORE_0
-            | bytecode::ASTORE_0 => {
+            bytecode::ISTORE_0 | bytecode::FSTORE_0 | bytecode::ASTORE_0 => {
                 let value = stack.pop();
                 stack.set_local(0, value);
                 pc += 1;
@@ -273,9 +271,7 @@ fn interpret(
                 stack.set_local(1, top);
                 pc += 1;
             }
-            bytecode::ISTORE_1
-            | bytecode::FSTORE_1
-            | bytecode::ASTORE_1 => {
+            bytecode::ISTORE_1 | bytecode::FSTORE_1 | bytecode::ASTORE_1 => {
                 let value = stack.pop();
                 stack.set_local(1, value);
                 pc += 1;
@@ -287,9 +283,7 @@ fn interpret(
                 stack.set_local(2, top);
                 pc += 1;
             }
-            bytecode::ISTORE_2
-            | bytecode::FSTORE_2
-            | bytecode::ASTORE_2 => {
+            bytecode::ISTORE_2 | bytecode::FSTORE_2 | bytecode::ASTORE_2 => {
                 let value = stack.pop();
                 stack.set_local(2, value);
                 pc += 1;
@@ -301,9 +295,7 @@ fn interpret(
                 stack.set_local(3, top);
                 pc += 1;
             }
-            bytecode::ISTORE_3
-            | bytecode::FSTORE_3
-            | bytecode::ASTORE_3 => {
+            bytecode::ISTORE_3 | bytecode::FSTORE_3 | bytecode::ASTORE_3 => {
                 let value = stack.pop();
                 stack.set_local(3, value);
                 pc += 1;
@@ -936,19 +928,20 @@ fn interpret(
             bytecode::INVOKEVIRTUAL => {
                 let cp_index = index(code[pc + 1], code[pc + 2]);
                 //TODO match the signature
-                let (virtual_index, _) = callee_class.resolve_virtual_method(
+                let (virtual_index, paramter_count) = callee_class.resolve_virtual_method(
                     cp_index,
                     classes,
                     heap,
                     methods,
                     stack.get_stack_for_call(),
                 )?;
-                let instance = stack.pop().as_reference().to_heap_index();
+                let instance = stack
+                    .peek(paramter_count - 1)
+                    .as_reference()
+                    .to_heap_index();
                 let method_index = heap
                     .resolve(instance)
                     .dispatch_virtual(virtual_index, classes);
-                // Re-push the instance because the callee need is as the this reference
-                stack.push(StackValue::from_reference(JvmReference(instance)));
 
                 let return_type = methods.get_data(method_index).return_type;
                 let return_value = call_method(

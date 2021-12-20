@@ -1,16 +1,19 @@
-use std::alloc::Layout;
+use std::{alloc::Layout, sync::atomic::{AtomicUsize, Ordering}};
 
 #[repr(C)]
 pub struct NativeList<T: Copy> {
     list: *mut T,
-    length: usize,
+    layout: Layout
 }
 
 impl<T: Copy> NativeList<T> {
-    pub fn alloc(length: usize) -> Self {
-        let layout = Layout::from_size_align(length * 8, 8).unwrap();
+    pub fn alloc(capacity: usize, align: usize) -> Self {
+        let layout = Layout::from_size_align(capacity * std::mem::size_of::<T>(), align).unwrap();
         let list = unsafe { std::alloc::alloc(layout) as *mut T };
-        Self { list, length }
+        Self {
+            list,
+            layout
+        }
     }
 
     pub unsafe fn get(&self, index: usize) -> T {
@@ -36,7 +39,7 @@ impl<T: Copy> Drop for NativeList<T> {
         unsafe {
             std::alloc::dealloc(
                 self.list as *mut u8,
-                Layout::from_size_align(self.length * 8, 8).unwrap(),
+                self.layout,
             );
         }
     }

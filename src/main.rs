@@ -45,10 +45,7 @@ fn main() {
 
     dbg!(&classes
         .resolve_by_name("Test", &methods, &mut heap, stack)
-        .get_static_field_by_name("a", &classes).unwrap().long());
-        dbg!(&classes
-            .resolve_by_name("Test", &methods, &mut heap, stack)
-            .get_static_field_by_name("b", &classes).unwrap().float());
+        .get_static_field_by_name("a", &classes).unwrap().double());
 
     /*
     let mut ops = dynasmrt::x64::Assembler::new().unwrap();

@@ -30,10 +30,12 @@ pub struct Class {
 
     static_methods: HashMap<String, (MethodIndex, usize)>,
     virtual_methods: HashMap<String, (MethodIndex, VirtualMethodIndex, usize)>, // The MethodIndex is used for static dispatch (i.e. invokespecial)
-    dispatch_table: Vec<MethodIndex>,
+    dispatch_table: *const MethodIndex,
+    dispatch_table_length: usize,
 }
 
 impl Class {
+    /// Returns (class, statics_length in bytes, dispatch_table_length in dwords)
     pub fn new(
         data: ClassData,
         constant_pool: ConstantPool,
@@ -41,7 +43,8 @@ impl Class {
         super_class: Option<&Class>,
         methods: &MethodTable,
         static_fields_position: *mut u8,
-    ) -> Result<(Self, usize), ClassCreationError> {
+        dispatch_table_position: *mut MethodIndex,
+    ) -> Result<(Self, usize, usize), ClassCreationError> {
         let static_field_layout = field::layout_fields(&FieldLayout::empty(), &data.static_fields);
         let static_fields = unsafe {
             Fields::init_from_layout_at(
@@ -88,11 +91,15 @@ impl Class {
         } else {
             HashMap::new()
         };
-        let mut dispatch_table = if let Some(super_class) = super_class {
-            super_class.dispatch_table.clone()
-        } else {
-            Vec::new()
-        };
+        let mut dispatch_table = Vec::new();
+        if let Some(super_class) = super_class {
+            unsafe {
+                dispatch_table.extend_from_slice(std::slice::from_raw_parts(
+                    super_class.dispatch_table,
+                    super_class.dispatch_table_length,
+                ));
+            }
+        }
         for desc in &data.methods {
             match &desc.code {
                 MethodCode::Bytecode(_) => {
@@ -123,6 +130,13 @@ impl Class {
                 MethodCode::Native => {}   // TODO
             }
         }
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                dispatch_table.as_ptr(),
+                dispatch_table_position,
+                dispatch_table.len(),
+            );
+        }
 
         Ok((
             Self {
@@ -135,9 +149,11 @@ impl Class {
                 field_layout,
                 static_methods,
                 virtual_methods,
-                dispatch_table,
+                dispatch_table: dispatch_table_position,
+                dispatch_table_length: dispatch_table.len(),
             },
             statics_length,
+            dispatch_table.len(),
         ))
     }
 
@@ -264,8 +280,8 @@ impl Class {
         match self.constant_pool.get_method(index)? {
             MethodReference::ResolvedStatic {
                 index,
-                argument_count,
-            } => Ok((index, argument_count)),
+                parameter_count,
+            } => Ok((index, parameter_count)),
             MethodReference::Unresolved {
                 class,
                 name_and_type,
@@ -304,8 +320,8 @@ impl Class {
         match self.constant_pool.get_method(index)? {
             MethodReference::ResolvedStatic {
                 index,
-                argument_count,
-            } => Ok((index, argument_count)),
+                parameter_count,
+            } => Ok((index, parameter_count)),
             MethodReference::Unresolved {
                 class,
                 name_and_type,
@@ -344,9 +360,9 @@ impl Class {
         match self.constant_pool.get_method(index)? {
             MethodReference::ResolvedVirtual {
                 virtual_index,
-                argument_count,
+                parameter_count,
                 ..
-            } => Ok((virtual_index, argument_count)),
+            } => Ok((virtual_index, parameter_count)),
             MethodReference::Unresolved {
                 class,
                 name_and_type,
@@ -450,8 +466,8 @@ impl Class {
         self.constant_pool.resolve_type(index)
     }
 
-    pub fn dispatch_virtual(&self, index: VirtualMethodIndex) -> MethodIndex {
-        self.dispatch_table[index.0]
+    pub fn dispatch_virtual_call(&self, method: VirtualMethodIndex) -> MethodIndex {
+        unsafe { *self.dispatch_table.offset(method.0 as isize) }
     }
 }
 

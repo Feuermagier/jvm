@@ -96,15 +96,15 @@ impl JvmReference {
     }
 }
 
-impl From<u16> for JvmReference {
-    fn from(value: u16) -> Self {
-        Self(HeapIndex::from_u16(value))
+impl From<u32> for JvmReference {
+    fn from(value: u32) -> Self {
+        Self(HeapIndex::from_u32(value))
     }
 }
 
-impl From<JvmReference> for u16 {
+impl From<JvmReference> for u32 {
     fn from(value: JvmReference) -> Self {
-        value.0.as_u16()
+        value.0.as_u32()
     }
 }
 
