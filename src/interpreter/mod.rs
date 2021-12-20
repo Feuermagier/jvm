@@ -243,7 +243,6 @@ fn interpret(
             }
 
             // + array loads
-            //TODO stores for double/long shoud use two slots
             bytecode::ISTORE | bytecode::FSTORE | bytecode::ASTORE => {
                 let index = code[pc + 1];
                 let value = stack.pop();
