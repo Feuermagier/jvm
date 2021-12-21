@@ -5,3 +5,19 @@ rcx: class library reference
 r8: method table reference
 
 rax: return value
+
+// JIT
+
+// The following registers are preserved by sysv64 and can therefore be used by calls to Rust code
+r12: java stack pointer
+r13: heap reference
+r14: class library reference
+r15: method table reference
+
+// Calls
+rdi: method_index of the called method (used by the interpreter to fetch the MethodData, including the bytecode to be executed)
+rax: return value
+
+// Scratch registers in methods; not preserved
+rax: stack push/pop target
+rcx: second operand for binary instructions

@@ -19,24 +19,24 @@ use std::arch::{asm, global_asm};
 global_asm!(
     ".global interpreter_trampoline",
     "interpreter_trampoline:",
-    "sub rsp, 8", // Stack alignment (8B return address to caller of interpreter_trampoline; 16B required => 8B padding)
-    "mov rbx, rdi", // Store the global references in registers that are callee-saved in sysv64
-    "mov r12, rsi",
-    "mov r13, rdx",
-    "mov r14, rcx",
-    "mov r15, r8",
-    "call interpret_method",
-    "add rsp, 8", // Restore the global references
-    "mov rdi, rbx",
+    // Stack alignment (8B return address to caller of interpreter_trampoline; 16B required => 8B padding)
+    "sub rsp, 8", 
+    // Move the global variables to the sysv64 parameter registers. 
+    // The method_index is already placed in rdi.
+    // r12-r15 are preserved by sysv64 and therefore we don't have to save them on the stack
     "mov rsi, r12",
     "mov rdx, r13",
     "mov rcx, r14",
     "mov r8, r15",
+    "call interpret_method",
+    "add rsp, 8",
     "ret"
 );
 
 extern "sysv64" {
-    pub fn interpreter_trampoline();
+    /// Never call this directly! This uses the internal calling convention and not the acutal
+    /// sysv64 calling convention. This function does the translation between them.
+    pub fn interpreter_trampoline(method_index: MethodIndex);
 }
 
 pub extern "sysv64" fn call_method(
@@ -57,16 +57,15 @@ pub extern "sysv64" fn call_method(
         let return_value: i64;
         asm!(
             "call {0}",
-            "/* {0} */",
-            "mov {1}, rax",
             in(reg) target,
-            lateout(reg) return_value,
             in("rdi") method_index,
-            in("rsi") stack,
-            in("rdx") heap,
-            in("rcx") classes,
-            in("r8") methods,
+            in("r12") stack,
+            in("r13") heap,
+            in("r14") classes,
+            in("r15") methods,
+            lateout("rax") return_value,
         );
+        dbg!("Returned from method!");
         JvmValue::from_native(return_value)
     }
 }
@@ -87,7 +86,6 @@ pub unsafe extern "sysv64" fn interpret_method(
     let mut stack_frame = StackFrame::prepare(stack, method.argument_count, method.max_locals);
     let return_value = interpret(method, heap, classes, methods, &mut stack_frame).unwrap();
     stack_frame.clear();
-
     return_value.to_native()
 }
 

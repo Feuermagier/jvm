@@ -145,12 +145,6 @@ impl StackFrame {
 pub struct StackValue(u32);
 
 impl StackValue {
-    pub unsafe fn from_raw(value: u32) -> Self {
-        Self(value)
-    }
-}
-
-impl StackValue {
     pub fn as_int(self) -> JvmInt {
         unsafe { std::mem::transmute::<u32, i32>(self.0) }.into()
     }
@@ -187,6 +181,14 @@ impl StackValue {
 
     pub fn from_reference(value: JvmReference) -> Self {
         unsafe { Self(value.0.into_raw() as u32) }
+    }
+
+    pub fn to_raw(self) -> i32 {
+        unsafe { std::mem::transmute::<u32, i32>(self.0) }
+    }
+
+    pub fn from_raw(value: i32) -> Self {
+        unsafe { Self(std::mem::transmute::<i32, u32>(value)) }
     }
 }
 
