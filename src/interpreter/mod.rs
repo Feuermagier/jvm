@@ -23,7 +23,7 @@ global_asm!(
     "sub rsp, 8", 
     // Move the global variables to the sysv64 parameter registers. 
     // The method_index is already placed in rdi.
-    // r12-r15 are preserved by sysv64 and therefore we don't have to save them on the stack
+    // r12-r15 and rbx are preserved by sysv64 and therefore we don't have to save them on the stack
     "mov rsi, r12",
     "mov rdx, r13",
     "mov rcx, r14",
@@ -56,7 +56,11 @@ pub extern "sysv64" fn call_method(
 
         let return_value: i64;
         asm!(
+            "sub rsp, 8",
+            "push rbx",
             "call {0}",
+            "pop rbx",
+            "add rsp, 8",
             in(reg) target,
             in("rdi") method_index,
             in("r12") stack,
@@ -65,7 +69,6 @@ pub extern "sysv64" fn call_method(
             in("r15") methods,
             lateout("rax") return_value,
         );
-        dbg!("Returned from method!");
         JvmValue::from_native(return_value)
     }
 }
@@ -82,7 +85,7 @@ pub unsafe extern "sysv64" fn interpret_method(
     let classes = &*classes;
     let methods = &*methods;
 
-    let method = methods.get_data(method_index);
+    let method = &methods.get_data(method_index);
     let mut stack_frame = StackFrame::prepare(stack, method.argument_count, method.max_locals);
     let return_value = interpret(method, heap, classes, methods, &mut stack_frame).unwrap();
     stack_frame.clear();

@@ -1,9 +1,11 @@
 use core::fmt::Debug;
+use std::{cell::{RefCell, Ref}, borrow::Borrow};
 
 use appendlist::AppendList;
 
 use crate::{
     interpreter::{self},
+    jit::CodeBuffer,
     list::NativeList,
 };
 
@@ -51,32 +53,30 @@ impl Debug for MethodCode {
     }
 }
 
+pub type NativeMethod = extern "sysv64" fn(
+    MethodIndex,
+    StackPointer,
+    *mut Heap,
+    *const ClassLibrary,
+    *const MethodTable,
+) -> JvmValue;
+
 pub enum MethodImplementation {
-    Native(
-        Box<
-            extern "sysv64" fn(
-                MethodIndex,
-                StackPointer,
-                *mut Heap,
-                *const ClassLibrary,
-                *const MethodTable,
-            ) -> JvmValue,
-        >,
-    ),
+    Native(Box<NativeMethod>, Box<dyn CodeBuffer>),
     Interpreted,
 }
 
 #[repr(C)]
 pub struct MethodTable {
     call_table: NativeList<u64>,
-    methods: AppendList<MethodEntry>,
+    methods: RefCell<Vec<MethodEntry>>,
 }
 
 impl MethodTable {
     pub fn new(length: usize) -> Self {
         Self {
             call_table: NativeList::alloc(length, 8),
-            methods: AppendList::new(),
+            methods: RefCell::new(Vec::new()),
         }
     }
 
@@ -85,19 +85,18 @@ impl MethodTable {
         implementation: MethodImplementation,
         data: MethodData,
     ) -> MethodIndex {
-        let index = self.methods.len();
-        let ptr = match &implementation {
-            MethodImplementation::Native(code) => **code as u64,
-            MethodImplementation::Interpreted => interpreter::interpreter_trampoline as u64,
-        };
-        unsafe {
-            self.call_table.set(index, ptr);
-        }
-        self.methods.push(MethodEntry {
+        let index = self.methods.borrow().len();
+        self.patch_call_table(index, &implementation);
+        self.methods.borrow_mut().push(MethodEntry {
             implementation,
             data,
         });
-        (self.methods.len() - 1).into()
+        index.into()
+    }
+
+    pub fn update_method(&self, index: MethodIndex, implementation: MethodImplementation) {
+        self.patch_call_table(index.into(), &implementation);
+        self.methods.borrow_mut()[index.0 as usize].implementation = implementation;
     }
 
     pub unsafe fn resolve(&self, method_index: MethodIndex) -> u64 {
@@ -108,12 +107,22 @@ impl MethodTable {
         self.call_table.get_pointer()
     }
 
-    pub fn get_data(&self, method_index: MethodIndex) -> &MethodData {
-        &self.methods[method_index.into()].data
+    pub fn get_data(&self, method_index: MethodIndex) -> Ref<'_, MethodData> {
+        Ref::map(self.methods.borrow(), |m| &m[method_index.0 as usize].data)
     }
 
     pub fn method_count(&self) -> usize {
-        self.methods.len()
+        self.methods.borrow().len()
+    }
+
+    fn patch_call_table(&self, index: usize, implementation: &MethodImplementation) {
+        let ptr = match &implementation {
+            MethodImplementation::Native(code, _) => **code as u64,
+            MethodImplementation::Interpreted => interpreter::interpreter_trampoline as u64,
+        };
+        unsafe {
+            self.call_table.set(index, ptr);
+        }
     }
 }
 

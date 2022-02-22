@@ -38,6 +38,9 @@ fn main() {
 
     let class = classes.resolve_by_name("Test", &methods, &mut heap, stack).index();
 
+    let (foo_idx, _) = classes.resolve(class).resolve_own_virtual_method_by_name("foo");
+    methods.update_method(foo_idx, jit::compile_method(foo_idx, &classes, &methods).unwrap());
+
     let (main, _) = classes
         .resolve(class)
         .resolve_own_static_method_by_name("main");

@@ -1,23 +1,22 @@
+// ABI for calls to Java methods
+// The interpreter trampoline and the JIT compiler rely on this convention
+// The registers are chosen so that they are preserved by sysv64 and can therefore be used in calls to Rust code
+rdi: method_index of the called method (used by the interpreter to fetch the MethodData, including the bytecode to be executed)
+rbx: java base pointer (of the caller)
+r12: java stack pointer (at the time of the call)
+r13: heap reference
+r14: class library reference
+r15: method table reference
+rax: return value (of the called method)
+
+// Scratch registers in methods; not preserved
+rax: stack push/pop target
+rcx: second operand for binary instructions
+
+// ABI used to call the interpreter (i.e. sysv64)
 rdi: method_index
 rsi: java stack pointer
 rdx: heap reference
 rcx: class library reference
 r8: method table reference
-
 rax: return value
-
-// JIT
-
-// The following registers are preserved by sysv64 and can therefore be used by calls to Rust code
-r12: java stack pointer
-r13: heap reference
-r14: class library reference
-r15: method table reference
-
-// Calls
-rdi: method_index of the called method (used by the interpreter to fetch the MethodData, including the bytecode to be executed)
-rax: return value
-
-// Scratch registers in methods; not preserved
-rax: stack push/pop target
-rcx: second operand for binary instructions

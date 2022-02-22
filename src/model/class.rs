@@ -3,6 +3,7 @@ use std::{borrow::BorrowMut, cell::RefCell, collections::HashMap};
 use crate::{
     class_parser::ClassData,
     interpreter::{self, ExecutionError},
+    jit,
     model::constant_pool::{ConstantPoolEntry, ConstantPoolError},
 };
 
@@ -28,7 +29,7 @@ pub struct Class {
 
     field_layout: FieldLayout,
 
-    static_methods: HashMap<String, (MethodIndex, usize)>,
+    static_methods: HashMap<String, (MethodIndex, usize)>, // second tuple element is the parameter count
     virtual_methods: HashMap<String, (MethodIndex, VirtualMethodIndex, usize)>, // The MethodIndex is used for static dispatch (i.e. invokespecial)
     dispatch_table: *const MethodIndex,
     dispatch_table_length: usize,
@@ -307,6 +308,12 @@ impl Class {
 
     pub fn resolve_own_static_method_by_name(&self, name: &str) -> (MethodIndex, usize) {
         *self.static_methods.get(name).unwrap()
+    }
+
+    /// This does not perform dynamic dispatch!
+    pub fn resolve_own_virtual_method_by_name(&self, name: &str) -> (MethodIndex, usize) {
+        let (index, _, parameter_count) = *self.virtual_methods.get(name).unwrap();
+        return (index, parameter_count)
     }
 
     pub fn resolve_virtual_method_statically(

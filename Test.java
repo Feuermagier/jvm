@@ -1,11 +1,11 @@
 public class Test {
     static double a;
 	public static void main() {
-		Test x = new Test2();
-        x.foo(3.14);
+		Test x = new Test();
+        a = x.foo();
     }
     
-    public void foo(double x) {
-        a = x;
+    public int foo() {
+        return 42;
     }
 }

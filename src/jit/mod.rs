@@ -1,4 +1,4 @@
-mod assembly;
+mod disassemble;
 
 use dynasmrt::{dynasm, relocations::Relocation, Assembler, DynasmApi};
 
@@ -6,9 +6,9 @@ use crate::{
     bytecode,
     model::{
         class_library::ClassLibrary,
-        constant_pool::{ConstantPoolIndex, ConstantPoolError},
+        constant_pool::{ConstantPoolError, ConstantPoolIndex},
         heap::{Heap, HeapIndex},
-        method::{MethodImplementation, MethodIndex, MethodTable},
+        method::{MethodImplementation, MethodIndex, MethodTable, NativeMethod},
         stack::StackValue,
         types::JvmType,
         value::{JvmDouble, JvmFloat, JvmInt, JvmLong, JvmValue},
@@ -17,14 +17,23 @@ use crate::{
 
 pub fn compile_method(
     method_index: MethodIndex,
-    heap: &mut Heap,
     classes: &ClassLibrary,
     methods: &MethodTable,
-) -> Result<Box<MethodImplementation>, CompilationError> {
+) -> Result<MethodImplementation, CompilationError> {
     let method = methods.get_data(method_index);
     let owning_class = classes.resolve(method.owning_class);
 
     let mut ops = dynasmrt::x64::Assembler::new().unwrap();
+
+    let start_offset = ops.offset();
+
+    // Prologue
+    dynasm!(ops
+        ; .arch x64
+        ; sub rsp, 8
+        ; push rbx
+        ; mov rbx, r12
+    );
 
     let mut offsets = Vec::with_capacity(method.code.len());
 
@@ -121,32 +130,66 @@ pub fn compile_method(
                 code_index += 2;
             }
             bytecode::LDC_W | bytecode::LDC2_W => {
-                let index =
-                    ConstantPoolIndex::from(u16::from_be_bytes([method.code[code_index + 1], method.code[code_index + 2]]));
+                let index = ConstantPoolIndex::from(u16::from_be_bytes([
+                    method.code[code_index + 1],
+                    method.code[code_index + 2],
+                ]));
                 let (ty, value) = owning_class.get_loadable(index)?;
                 push_constant_type(&mut ops, value, ty);
                 code_index += 3;
             }
 
+            bytecode::RETURN => {
+                break;
+            }
+
+            bytecode::IRETURN => {
+                // We can use pop/pop_wide, because rax is used for the return value
+                pop(&mut ops);
+                break;
+            }
+
             _ => todo!("Unimplemented opcode {:#04x}", opcode),
         }
     }
+
+    // Epilogue
+    dynasm!(ops
+        ; .arch x64
+        ; mov r12, rbx
+        ; pop rbx
+        ; add rsp, 8
+        ; ret
+    );
+
+    // Create the function
+    ops.commit()?;
+    let buf = ops.finalize().expect("Failed to create the executable buffer");
+
+    println!("============== Compilation output of {0} ==============", method.name);
+    println!("{}", disassemble::disassemble(&buf));
+    println!("========== End of compilation output of {0} ===========", method.name);
+
+    let function: NativeMethod = unsafe {
+        std::mem::transmute(buf.ptr(start_offset))
+    };
+    return Ok(MethodImplementation::Native(Box::new(function), Box::new(buf)))
 }
 
 fn push_constant<R: Relocation>(ops: &mut Assembler<R>, value: StackValue) {
     dynasm!(ops
         ; .arch x64
-        ; mov DWORD [rsi], value.to_raw()
-        ; add rsi, 4
+        ; mov DWORD [r12], value.to_raw()
+        ; add r12, 4
     );
 }
 
 fn push_wide_constant<R: Relocation>(ops: &mut Assembler<R>, value: (StackValue, StackValue)) {
     dynasm!(ops
         ; .arch x64
-        ; mov DWORD [rsi], value.0.to_raw()
-        ; mov DWORD [rsi + 4], value.0.to_raw()
-        ; add rsi, 8
+        ; mov DWORD [r12], value.0.to_raw()
+        ; mov DWORD [r12 + 4], value.0.to_raw()
+        ; add r12, 8
     );
 }
 
@@ -164,30 +207,32 @@ fn push_constant_type<R: Relocation>(ops: &mut Assembler<R>, value: JvmValue, ty
 fn push<R: Relocation>(ops: &mut Assembler<R>) {
     dynasm!(ops
         ; .arch x64
-        ; mov [rsi], eax
-        ; add rsi, 4
+        ; mov [r12], eax
+        ; add r12, 4
     );
 }
 
 fn pop<R: Relocation>(ops: &mut Assembler<R>) {
     dynasm!(ops
         ; .arch x64
-        ; sub rsi, 4
-        ; mov eax, [rsi]
+        ; sub r12, 4
+        ; mov eax, [r12]
     );
 }
 
 fn pop_wide<R: Relocation>(ops: &mut Assembler<R>) {
     dynasm!(ops
         ; .arch x64
-        ; sub rsi, 8
-        ; mov rax, [rsi]
+        ; sub r12, 8
+        ; mov rax, [r12]
     );
 }
 
-fn load_local<R: Relocation>(ops: &mut Assembler<R>, index: usize) {
-    
-}
+fn load_local<R: Relocation>(ops: &mut Assembler<R>, index: usize) {}
+
+pub trait CodeBuffer {}
+
+impl CodeBuffer for dynasmrt::ExecutableBuffer {}
 
 #[derive(Debug, thiserror::Error)]
 pub enum CompilationError {
@@ -195,5 +240,8 @@ pub enum CompilationError {
     MissingReturn,
 
     #[error(transparent)]
-    ConstantPoolError(#[from] ConstantPoolError)
+    ConstantPoolError(#[from] ConstantPoolError),
+
+    #[error(transparent)]
+    DynasmError(#[from] dynasmrt::DynasmError)
 }
