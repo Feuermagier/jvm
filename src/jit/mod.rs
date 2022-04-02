@@ -30,9 +30,9 @@ pub fn compile_method(
     // Prologue
     dynasm!(ops
         ; .arch x64
-        ; sub rsp, 8
-        ; push rbx
-        ; mov rbx, r12
+        ; sub rsp, 8    // Stack alignment (8B padding + 8B saved base pointer)
+        ; push rbx      // Save the base pointer
+        ; mov rbx, r12  // Update the base pointer to the current stack pointer
     );
 
     let mut offsets = Vec::with_capacity(method.code.len());
@@ -236,7 +236,7 @@ impl CodeBuffer for dynasmrt::ExecutableBuffer {}
 
 #[derive(Debug, thiserror::Error)]
 pub enum CompilationError {
-    #[error("The end of the bytecode was reached by no return instruction has been found")]
+    #[error("The end of the bytecode was reached but no return instruction has been found")]
     MissingReturn,
 
     #[error(transparent)]
