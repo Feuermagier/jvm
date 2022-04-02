@@ -156,10 +156,10 @@ pub fn compile_method(
     // Epilogue
     dynasm!(ops
         ; .arch x64
-        ; mov r12, rbx
-        ; pop rbx
-        ; add rsp, 8
-        ; ret
+        ; mov r12, rbx  // Restore the old stack pointer
+        ; pop rbx       // Restore the old base pointer
+        ; add rsp, 8    // Revert padding
+        ; ret           // Return to caller
     );
 
     // Create the function
